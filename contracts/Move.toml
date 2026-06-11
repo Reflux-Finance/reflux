@@ -1,0 +1,24 @@
+[package]
+name = "reflux"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+# --- External protocol dependencies ---------------------------------------
+# Uncomment as published package addresses / revs are confirmed
+# (see CLAUDE.md "External dependencies" and docs/INTEGRATION_NOTES.md).
+#
+# DeepBook Predict — MUST use branch predict-testnet-4-16, NOT main:
+# predict = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/predict", rev = "predict-testnet-4-16" }
+# deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "predict-testnet-4-16" }
+#
+# DeepBook Margin:
+# deepbook_margin = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook_margin", rev = "predict-testnet-4-16" }
+#
+# Iron Bank (pending OPEN QUESTION 2 — contract-caller access):
+# iron_bank = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/iron_bank", rev = "predict-testnet-4-16" }
+
+[addresses]
+reflux = "0x0"
