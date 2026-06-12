@@ -174,7 +174,8 @@ public fun create_for_testing(ctx: &mut TxContext): IBCreditState {
 #[test_only]
 public fun destroy_for_testing(s: IBCreditState) {
     let IBCreditState { id, parked_balance, buffer_drawn: _, venue_tag: _ } = s;
-    parked_balance.destroy_zero();
+    // Use force-destroy so tests with non-zero parked balance still clean up.
+    std::unit_test::destroy(parked_balance);
     id.delete();
 }
 
