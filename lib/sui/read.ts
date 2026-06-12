@@ -35,7 +35,13 @@ export const AllocationPolicySchema = z.object({
 });
 export type OnChainAllocationPolicy = z.infer<typeof AllocationPolicySchema>;
 
+const nestedBalance = z
+  .object({ fields: z.object({ value: u64Field }) })
+  .transform((b) => b.fields.value)
+  .or(u64Field);
+
 export const IBCreditStateSchema = z.object({
+  parked_balance: nestedBalance.optional(),
   buffer_drawn: u64Field,
   venue_tag: z.number().or(z.string().transform(Number)),
 });
