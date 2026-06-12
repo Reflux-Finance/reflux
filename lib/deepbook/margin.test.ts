@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeMarginLtvBps, isLtvBreached } from './margin.js';
+import { computeMarginLtvBps } from './margin.js';
+import { isLtvBreached } from '../risk/ltv.js';
 
 describe('computeMarginLtvBps', () => {
   it('returns 5000 bps for 50% LTV', () => {
@@ -12,7 +13,7 @@ describe('computeMarginLtvBps', () => {
   });
 });
 
-describe('isLtvBreached', () => {
+describe('isLtvBreached (from risk/ltv)', () => {
   it('false below max', () => expect(isLtvBreached(5_000n, 6_500n)).toBe(false));
   it('true at max', () => expect(isLtvBreached(6_500n, 6_500n)).toBe(true));
   it('true above max', () => expect(isLtvBreached(7_000n, 6_500n)).toBe(true));

@@ -33,11 +33,6 @@ export function computeMarginLtvBps(
   return numerator / denominator;
 }
 
-/** Returns true when ltv_bps >= max_ltv_bps (breach condition). */
-export function isLtvBreached(ltvBps: bigint, maxLtvBps: bigint): boolean {
-  return ltvBps >= maxLtvBps;
-}
-
 // ─── On-chain read ────────────────────────────────────────────────────────────
 
 export async function readMarginPosition(

@@ -33,7 +33,7 @@ export const AllocationPolicySchema = z.object({
   regime_shift_bps: u64Field,
   roll_counter: u64Field,
 });
-export type AllocationPolicy = z.infer<typeof AllocationPolicySchema>;
+export type OnChainAllocationPolicy = z.infer<typeof AllocationPolicySchema>;
 
 export const IBCreditStateSchema = z.object({
   buffer_drawn: u64Field,
@@ -88,7 +88,7 @@ export async function readShareRegistry(client: SuiClient, id: string): Promise<
   }
 }
 
-export async function readAllocationPolicy(client: SuiClient, id: string): Promise<AllocationPolicy> {
+export async function readAllocationPolicy(client: SuiClient, id: string): Promise<OnChainAllocationPolicy> {
   try {
     return AllocationPolicySchema.parse(await fetchFields(client, id));
   } catch (e) {
