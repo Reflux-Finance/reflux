@@ -5,7 +5,7 @@
   "description": "Reflux — a Structured Yield OS for Sui (DeepBook Predict track, Sui Overflow 2026)",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm --filter @reflux/lib build && pnpm -r test",
     "lint": "eslint lib keeper/src sim/src --ext .ts && pnpm --filter app lint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
