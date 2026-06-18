@@ -2,6 +2,9 @@
   "name": "app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +12,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@mysten/dapp-kit": "^0.14.3",
+    "@mysten/enoki": "^1.0.8",
+    "@mysten/sui": "^1.24.0",
+    "@mysten/zklogin": "^0.7.3",
     "@reflux/lib": "workspace:^",
+    "@tanstack/react-query": "^5.51.1",
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
