@@ -21,8 +21,8 @@ import {
   ivRegime,
   requireDeployed,
 } from '@reflux/lib';
-import { suiClient, env } from '../_lib/client.js';
-import { ok, serverErr, serializeBigInt } from '../_lib/response.js';
+import { suiClient, env } from '../_lib/client';
+import { ok, serverErr, serializeBigInt } from '../_lib/response';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,8 +62,8 @@ export async function GET(): Promise<NextResponse> {
         atmIvE4,
         atmIvPct: Number(atmIvE4) / 100,
         regime,
-        ivLowThreshold: policy.iv_low_threshold,
-        ivHighThreshold: policy.iv_high_threshold,
+        ivLowThreshold: policy.iv_low_threshold_e4,
+        ivHighThreshold: policy.iv_high_threshold_e4,
         nextOracleId: nextOracle?.id ?? null,
         nextExpiryTs: nextOracle?.expiry_ts_ms ?? null,
       },
