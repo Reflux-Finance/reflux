@@ -18,7 +18,7 @@ const RawExpirySchema = z.object({
   oracleId: z.string(),
   openTimestampMs: z.number(),
   expiryTimestampMs: z.number(),
-  atmIvE4Open: z.string().transform(BigInt),
+  atmIvE4: z.string().transform(BigInt),
   settlementPriceE9: z.string().transform(BigInt),
   realisedVolE4: z.string().transform(BigInt),
 });
@@ -51,8 +51,8 @@ export async function fetchHistoryFromIndexer(
     oracleId: o.id,
     openTimestampMs: o.expiry_ts_ms - 30 * 24 * 60 * 60 * 1000, // estimate: 30d window
     expiryTimestampMs: o.expiry_ts_ms,
-    atmIvE4Open: 4_500n, // placeholder until SVI historical data is available
-    settlementPriceE9: BigInt(Math.round((o.settlement_price_e9 ?? 1) * 1e9)),
+    atmIvE4: 4_500n, // placeholder until SVI historical data is available
+    settlementPriceE9: BigInt(Math.floor(o.settlement_price_e9 ?? 1_000_000_000)),
     realisedVolE4: 4_000n, // placeholder
   }));
 
@@ -65,7 +65,7 @@ export async function fetchHistoryFromIndexer(
         openTimestampMs: t,
         expiryTimestampMs: t + 30 * 24 * 60 * 60 * 1000,
         // Vary IV between 2500 and 7000 to exercise regime transitions
-        atmIvE4Open: BigInt(2500 + (i % 10) * 500),
+        atmIvE4: BigInt(2500 + (i % 10) * 500),
         settlementPriceE9: 1_000_000_000n,
         realisedVolE4: BigInt(2000 + (i % 8) * 600),
       });

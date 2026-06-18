@@ -5,7 +5,7 @@ export interface HistoricalExpiry {
   openTimestampMs: number;
   expiryTimestampMs: number;
   /** ATM IV at open (annualised, e4-scaled bigint). */
-  atmIvE4Open: bigint;
+  atmIvE4: bigint;
   /** Settlement price in dUSDC, e9-scaled. */
   settlementPriceE9: bigint;
   /** Realised volatility over the window (annualised, e4-scaled). */
