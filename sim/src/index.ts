@@ -15,7 +15,6 @@
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readEnv } from '@reflux/lib';
 import { loadHistory } from './fetch-history.js';
 import { replayExpiries } from './engine.js';
 import { buildAllScenarios } from './scenarios.js';
@@ -23,9 +22,10 @@ import { buildScenarioResult, buildReport, renderMarkdown } from './report.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const DEFAULT_PREDICT_SERVER = 'https://predict-server.testnet.mystenlabs.com';
+
 async function main() {
-  const env = readEnv(process.env as Record<string, string>);
-  const indexerUrl = env.NEXT_PUBLIC_PREDICT_SERVER;
+  const indexerUrl = process.env['NEXT_PUBLIC_PREDICT_SERVER'] ?? DEFAULT_PREDICT_SERVER;
   const outPath = process.argv.find((a) => a.startsWith('--out='))?.slice(6)
     ?? join(__dirname, '../../SIMULATION.md');
 
