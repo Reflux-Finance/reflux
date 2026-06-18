@@ -5,7 +5,7 @@
  * Re-processing the same key is a safe no-op.
  */
 
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 
 export class DedupStore {
   private redis: Redis;
