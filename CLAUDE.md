@@ -55,19 +55,32 @@ One-liner (use verbatim in README/UI copy):
 
 If asked to build anything not in the current tier, refuse and cite this table.
 
+**Logged exception:** the BTC path was pulled forward from Tier 3 via
+**rfBTC** (`contracts/sources/rfbtc.move`) — a self-issued, capped-faucet
+testnet coin standing in for DeepBook's `dbtc`, which isn't deployed on the
+target testnet branch (`contracts/deps/dbtc` is a commented-out skeleton).
+This was necessary because the BTC input path was otherwise fully blocked on
+an external dependency with no ETA; rfBTC is interface-compatible with a 1:1
+swap to canonical BTC once `dbtc` lands. Do not generalize this exception —
+it does not authorize building other Tier 2/3 scope ahead of schedule.
+
 ## Repository layout
 
 ```
 reflux/
 ├── CLAUDE.md
-├── contracts/            # Sui Move package `reflux`
-│   ├── Move.toml
-│   ├── sources/           # see build order below
+├── docs/                  # INTEGRATION_NOTES.md (resolved DR-1/DR-2, verbatim ABIs) + fixtures/
+├── contracts/             # Sui Move package `reflux`
+│   ├── Move.toml  Published.toml
+│   ├── deps/               # local stubs for external coin packages (afsui, dbtc, dusdc, usdc, …)
+│   ├── sources/            # see build order below
 │   └── tests/
 ├── lib/                   # shared TypeScript SDK (used by app + keeper + sim)
 │   ├── sui/  deepbook/  lsd/  lsp/  strategy/  risk/  constants.ts
 ├── app/                   # Next.js 14 App Router (TypeScript)
-├── components/
+│   ├── app/                # pages + api routes
+│   ├── components/
+│   └── hooks/
 ├── keeper/                # standalone Node.js service
 ├── sim/                   # simulation harness → SIMULATION.md
 └── tests/integration/     # end-to-end testnet flows
@@ -80,6 +93,10 @@ reflux/
 7. `ib_credit.move` 8. `leverage.move` 9. `allocator.move`
 10. `predict_strategy.move` 11. `emergency.move` 12. `deposit_router.move`
 13. `vault.move`
+
+Plus, outside the strict chain: `rfbtc.move` (testnet BTC bridge coin, see
+the logged Tier exception above) and `types.move` (coin witnesses for
+assets not yet live on testnet: `VSUI`, `HASUI`, `BTC`).
 
 ## Engineering conventions
 
@@ -115,17 +132,23 @@ reflux/
 - LSPs: Volo (vSUI), Aftermath (afSUI), Haedal (haSUI)
 - Sui TS SDK `@mysten/sui`; zkLogin for onboarding
 
-## OPEN QUESTIONS — resolve via DeepBook Telegram before writing dependent code
+## OPEN QUESTIONS — resolved (see `docs/INTEGRATION_NOTES.md` for full evidence)
 
-1. Canonical USDC ↔ dUSDC conversion on testnet: Spot pool vs native
-   wrap/unwrap? (Blocks `spot_router.move` + deposit_usdc)
-2. Does `iron_bank`'s permissioned USDsui supply allow a *contract* caller?
-   If not: degrade `ib_credit` to a reserved-dUSDC sleeve
-   (`reserve_weight_bps`) with identical public interface — the rest of the
-   system must not care which backing is used.
-
-Until answered: code behind an interface (`LiquiditySource` trait pattern)
-with both implementations stubbed.
+1. **Canonical USDC ↔ dUSDC conversion on testnet — RESOLVED.** No spot pool
+   or wrap module for this pair exists on `predict-testnet-4-16`. Reflux
+   ships its own 1:1 admin-seeded treasury inside `spot_router.move` (plus
+   SUI↔dUSDC and rfBTC↔dUSDC CPAMM pools) rather than depending on an
+   external pool that doesn't exist. `deposit_usdc` and the withdraw path
+   route through this internal router.
+2. **Does `iron_bank` allow a contract caller? — RESOLVED (no package
+   exists).** `grep -ri iron_bank` over `deepbookv3@predict-testnet-4-16`
+   returns zero hits. `ib_credit.move` ships `ReserveSleeveSource` (a
+   reserved-dUSDC sleeve, `reserve_weight_bps`) as the live default
+   implementation of the `LiquiditySource` interface; `IronBankSource`
+   stays behind the same interface for whenever that package is confirmed.
+   The two user guarantees (idle funds earn; instant exits under the buffer
+   cap) hold under either backing — the rest of the system does not care
+   which is active.
 
 ## Definition of production-grade (applies to every phase)
 
