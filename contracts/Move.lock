@@ -5,19 +5,49 @@
 version = 4
 
 [pinned.testnet.MoveStdlib]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "ff1fe0ec455153707136cffd0dc77dfb77ba9ad5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
 use_environment = "testnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
 
 [pinned.testnet.Sui]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "ff1fe0ec455153707136cffd0dc77dfb77ba9ad5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
 use_environment = "testnet"
 manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
 deps = { MoveStdlib = "MoveStdlib" }
 
+[pinned.testnet.afsui]
+source = { local = "deps/afsui" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
+[pinned.testnet.dusdc]
+source = { local = "deps/dusdc" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
 [pinned.testnet.reflux]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "0532D72C4F42A4472D331C54E2F8FB1595A305815D58568D26C6F8A4AC9BBFCE"
+manifest_digest = "0D058E912A1F909A127AB447E2BA96353C7C6A63FE42D5C65008BBE3B02368B7"
+deps = { afsui = "afsui", dusdc = "dusdc", std = "MoveStdlib", sui = "Sui", usdc = "usdc", usdc_stablecoin = "usdc_stablecoin", usdc_upgrade_service = "usdc_upgrade_service" }
+
+[pinned.testnet.usdc]
+source = { local = "deps/usdc" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
+[pinned.testnet.usdc_stablecoin]
+source = { local = "deps/usdc_stablecoin" }
+use_environment = "testnet"
+manifest_digest = "CD1D07F00D12C179EE3A44BDA1CC0B2D395F4E475625AE08965846E8A1FE9E9E"
+deps = { Sui = "Sui", usdc_upgrade_service = "usdc_upgrade_service" }
+
+[pinned.testnet.usdc_upgrade_service]
+source = { local = "deps/usdc_upgrade_service" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
 deps = { Sui = "Sui" }

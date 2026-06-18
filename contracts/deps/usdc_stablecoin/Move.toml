@@ -1,0 +1,12 @@
+[package]
+name = "usdc_stablecoin"
+edition = "2024.beta"
+published-at = "0x346e3233f61eb0055713417bfaddda7dc3bf26816faad1f7606994a368b92917"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
+usdc_upgrade_service = { local = "../usdc_upgrade_service" }
+
+[addresses]
+usdc_stablecoin = "0x346e3233f61eb0055713417bfaddda7dc3bf26816faad1f7606994a368b92917"
+usdc_upgrade_service = "0x252b1dd4b853d6b4c0721cf3f55c0587c940ee4d386d1b1cb5f46fa16e3de98a"

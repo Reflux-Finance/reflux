@@ -1,0 +1,10 @@
+[package]
+name = "usdc_upgrade_service"
+edition = "2024.beta"
+published-at = "0x252b1dd4b853d6b4c0721cf3f55c0587c940ee4d386d1b1cb5f46fa16e3de98a"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
+
+[addresses]
+usdc_upgrade_service = "0x252b1dd4b853d6b4c0721cf3f55c0587c940ee4d386d1b1cb5f46fa16e3de98a"

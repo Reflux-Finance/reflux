@@ -2,23 +2,35 @@
 name = "reflux"
 edition = "2024"
 version = "0.1.0"
+published-at = "0xee23c4aecc3ab750c2c62ca5861b4fc517f577b0f219d80fa25a42d838a09bea"
 
 [dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+# dUSDC: DeepBook synthetic stable — interface skeleton mirroring deepbookv3/packages/dusdc
+#        (published-at 0xe95040... matches the deployed testnet package)
+dusdc = { local = "deps/dusdc" }
+# dBTC: NOT yet deployed on testnet. Skeleton ready at deps/dbtc — uncomment + fill address below
+#       once MystenLabs publishes deepbookv3/packages/dbtc.
+# dbtc  = { local = "deps/dbtc" }
+# USDC: Circle canonical testnet USDC — skeleton + its transitive deps
+usdc                 = { local = "deps/usdc" }
+usdc_upgrade_service = { local = "deps/usdc_upgrade_service" }  # 0x252b1dd4 — Circle upgrade-service
+usdc_stablecoin      = { local = "deps/usdc_stablecoin" }       # 0x346e3233 — Circle stablecoin logic
+# afSUI: Aftermath Finance testnet LSD — skeleton with correct published-at
+afsui = { local = "deps/afsui" }
 
-# --- External protocol dependencies ---------------------------------------
-# Uncomment as published package addresses / revs are confirmed
-# (see CLAUDE.md "External dependencies" and docs/INTEGRATION_NOTES.md).
-#
-# DeepBook Predict — MUST use branch predict-testnet-4-16, NOT main:
+# --- External protocol dependencies (future phases) -----------------------
+# DeepBook Predict — branch predict-testnet-4-16 (NOT main):
 # predict = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/predict", rev = "predict-testnet-4-16" }
 # deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "predict-testnet-4-16" }
-#
-# DeepBook Margin:
 # deepbook_margin = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook_margin", rev = "predict-testnet-4-16" }
-#
-# Iron Bank (pending OPEN QUESTION 2 — contract-caller access):
-# iron_bank = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/iron_bank", rev = "predict-testnet-4-16" }
 
 [addresses]
-reflux = "0x0"
+reflux = "0xee23c4aecc3ab750c2c62ca5861b4fc517f577b0f219d80fa25a42d838a09bea"
+# Override to testnet deployed addresses (packages use "0x0" as placeholder)
+dusdc                = "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a"
+usdc                 = "0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29"
+afsui                = "0x5783fa2298e7301a1c7f99ce45d4a207478fbf3003eca9482ae823d6f6c7cd60"
+usdc_upgrade_service = "0x252b1dd4b853d6b4c0721cf3f55c0587c940ee4d386d1b1cb5f46fa16e3de98a"
+usdc_stablecoin      = "0x346e3233f61eb0055713417bfaddda7dc3bf26816faad1f7606994a368b92917"
+# dBTC: placeholder — uncomment once deepbookv3/packages/dbtc deploys on testnet
+# dbtc  = "0x0000000000000000000000000000000000000000000000000000000000000dbc"
