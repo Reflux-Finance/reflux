@@ -10,9 +10,9 @@
 
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { listOracles, fetchSviParams, computeAtmIvE4, nearestActiveOracle, readEnv } from '@reflux/lib';
-import { ok, serverErr, serializeBigInt } from '../../_lib/response.js';
-import { env } from '../../_lib/client.js';
+import { listOracles, fetchSviParams, computeAtmIvE4, nearestActiveOracle } from '@reflux/lib';
+import { ok, serverErr, serializeBigInt } from '../../_lib/response';
+import { env } from '../../_lib/client';
 
 export const dynamic = 'force-dynamic';
 

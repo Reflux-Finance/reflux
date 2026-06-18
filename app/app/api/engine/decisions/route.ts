@@ -13,8 +13,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireDeployed } from '@reflux/lib';
-import { suiClient, env } from '../../_lib/client.js';
-import { ok, validationErr, serverErr, serializeBigInt } from '../../_lib/response.js';
+import { suiClient, env } from '../../_lib/client';
+import { ok, validationErr, serverErr, serializeBigInt } from '../../_lib/response';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +32,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const deployed = requireDeployed(env);
     const { limit, cursor } = parsed.data;
 
-    const eventType = `${deployed.NEXT_PUBLIC_PACKAGE_ID}::allocator::AllocationDecision`;
+    // Struct types are always bound to the ORIGINAL (v1) package ID in Sui Move
+    // upgrades, even when emitted by code running in an upgraded (v2) package.
+    // Derive it from NEXT_PUBLIC_RFUSD_TYPE, which already carries the correct
+    // address (same pattern as app/api/user/positions/route.ts).
+    const originalPkgId =
+      (env.NEXT_PUBLIC_RFUSD_TYPE ?? '').split('::')[0] || deployed.NEXT_PUBLIC_PACKAGE_ID;
+
+    const eventType = `${originalPkgId}::allocator::AllocationDecision`;
 
     const events = await suiClient.queryEvents({
       query: { MoveEventType: eventType },
