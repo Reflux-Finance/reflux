@@ -17,21 +17,31 @@ export const VaultStateSchema = z.object({
 });
 export type VaultState = z.infer<typeof VaultStateSchema>;
 
+// ShareRegistry wraps TreasuryCap — total_supply lives at treasury_cap.fields.total_supply.fields.value.
 export const ShareRegistrySchema = z.object({
-  total_supply: u64Field,
+  treasury_cap: z.object({
+    fields: z.object({
+      total_supply: z.object({ fields: z.object({ value: u64Field }) }),
+    }),
+  }),
   nav_per_share_e9: u64Field,
-});
-export type ShareRegistry = z.infer<typeof ShareRegistrySchema>;
+}).transform((r) => ({
+  total_supply: r.treasury_cap.fields.total_supply.fields.value,
+  nav_per_share_e9: r.nav_per_share_e9,
+}));
+export type ShareRegistry = { total_supply: bigint; nav_per_share_e9: bigint };
 
 export const AllocationPolicySchema = z.object({
   base_plp_bps: u64Field,
   base_range_bps: u64Field,
   base_margin_loop_bps: u64Field,
   base_ib_idle_bps: u64Field,
-  iv_low_threshold: u64Field,
-  iv_high_threshold: u64Field,
+  // On-chain field names include the _e4 suffix — schema must match exactly.
+  iv_low_threshold_e4: u64Field,
+  iv_high_threshold_e4: u64Field,
   regime_shift_bps: u64Field,
   roll_counter: u64Field,
+  pending: z.unknown().optional(),
 });
 export type OnChainAllocationPolicy = z.infer<typeof AllocationPolicySchema>;
 
@@ -46,6 +56,11 @@ export const IBCreditStateSchema = z.object({
   venue_tag: z.number().or(z.string().transform(Number)),
 });
 export type IBCreditState = z.infer<typeof IBCreditStateSchema>;
+
+export const DepositPoolSchema = z.object({
+  dusdc: nestedBalance,
+});
+export type DepositPool = z.infer<typeof DepositPoolSchema>;
 
 export const VaultPositionSchema = z.object({
   owner: z.string(),
@@ -105,6 +120,14 @@ export async function readAllocationPolicy(client: SuiClient, id: string): Promi
 export async function readIBCreditState(client: SuiClient, id: string): Promise<IBCreditState> {
   try {
     return IBCreditStateSchema.parse(await fetchFields(client, id));
+  } catch (e) {
+    throw new ReadError(id, e);
+  }
+}
+
+export async function readDepositPool(client: SuiClient, id: string): Promise<DepositPool> {
+  try {
+    return DepositPoolSchema.parse(await fetchFields(client, id));
   } catch (e) {
     throw new ReadError(id, e);
   }
