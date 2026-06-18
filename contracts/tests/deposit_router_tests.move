@@ -6,7 +6,8 @@ use reflux::ib_credit;
 use reflux::risk_params;
 use reflux::share_token;
 use reflux::spot_router;
-use reflux::types::{USDC, VSUI};
+use reflux::types::VSUI;
+use usdc::usdc::USDC;
 use sui::coin;
 use sui::tx_context;
 
@@ -73,6 +74,142 @@ fun test_usdc_roundtrip_plain_usdc() {
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
     spot_router::destroy_for_testing(config);
+}
+
+// ─── test_deposit_usdc_real_records_output_usdc ──────────────────────────────
+// The real (non-mock) deposit_usdc must tag the position OUTPUT_USDC, so the
+// withdrawal path knows to swap dUSDC back to USDC. Regression test for a bug
+// where deposit_usdc recorded OUTPUT_ORIGINAL (raw dUSDC) instead.
+#[test]
+fun test_deposit_usdc_real_records_output_usdc() {
+    let mut ctx      = tx_context::dummy();
+    let mut registry = share_token::create_for_testing(&mut ctx);
+    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
+    let rp           = risk_params::create_for_testing(&mut ctx);
+    let mut config   = spot_router::create_for_testing(&mut ctx);
+
+    // Seed the real USDC/dUSDC treasury so the production swap has reserves.
+    let seed_usdc  = coin::mint_for_testing<USDC>(0, &mut ctx);
+    let seed_dusdc = deposit_router::mint_dusdc_for_testing(50_000_000, &mut ctx);
+    spot_router::seed_usdc_dusdc_for_testing(&mut config, seed_usdc, seed_dusdc);
+
+    let usdc = coin::mint_for_testing<USDC>(10_000_000, &mut ctx);
+    let (pos, shares) = deposit_router::deposit_usdc_returning(
+        usdc, 1, &mut config, &mut registry, &mut pool, &rp, &mut ctx,
+    );
+
+    assert!(deposit_router::position_preferred_output(&pos) == deposit_router::output_usdc(), 0);
+
+    sui::test_utils::destroy(shares);
+    deposit_router::destroy_position_for_testing(pos);
+    deposit_router::destroy_pool_for_testing(pool);
+    share_token::destroy_for_testing(registry);
+    risk_params::destroy_for_testing(rp);
+    spot_router::destroy_for_testing(config);
+}
+
+// ─── test_withdraw_partial_keeps_position_alive ──────────────────────────────
+#[test]
+fun test_withdraw_partial_keeps_position_alive() {
+    let mut ctx      = tx_context::dummy();
+    let mut registry = share_token::create_for_testing(&mut ctx);
+    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
+    let mut ib       = ib_credit::create_for_testing(&mut ctx);
+    let rp           = risk_params::create_for_testing(&mut ctx);
+    let config       = spot_router::create_for_testing(&mut ctx);
+
+    let deposit_amount = 10_000_000u64;
+    let usdc = coin::mint_for_testing<USDC>(deposit_amount, &mut ctx);
+    let (mut pos, mut shares) = deposit_router::deposit_usdc_mock_returning(
+        usdc, 1, &config, &mut registry, &mut pool, &rp, &mut ctx,
+    );
+
+    // Split off 4M of the 10M shares and withdraw just that slice.
+    let partial_shares = shares.split(4_000_000, &mut ctx);
+    let dusdc_out = deposit_router::withdraw_partial(
+        &mut pos, partial_shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+    );
+
+    assert!(dusdc_out.value() >= 3_999_999 && dusdc_out.value() <= 4_000_000, 0);
+    // Position survives with the remaining 6M tracked, still owned by the caller.
+    assert!(deposit_router::position_shares_minted(&pos) == 6_000_000, 1);
+    // Registry supply reflects only the burned slice.
+    assert!(share_token::total_supply(&registry) == 6_000_000, 2);
+    // Remaining 6M shares coin is still spendable — withdraw the rest via the
+    // full-withdrawal path, which now consumes the position.
+    let dusdc_out_2 = deposit_router::withdraw(
+        pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+    );
+    assert!(dusdc_out_2.value() >= 5_999_999 && dusdc_out_2.value() <= 6_000_000, 3);
+    assert!(share_token::total_supply(&registry) == 0, 4);
+
+    sui::test_utils::destroy(dusdc_out);
+    sui::test_utils::destroy(dusdc_out_2);
+    ib_credit::destroy_for_testing(ib);
+    deposit_router::destroy_pool_for_testing(pool);
+    share_token::destroy_for_testing(registry);
+    risk_params::destroy_for_testing(rp);
+    spot_router::destroy_for_testing(config);
+}
+
+// ─── test_withdraw_partial_rejects_full_amount ───────────────────────────────
+// Passing the entire shares_minted to withdraw_partial must abort — use
+// withdraw() instead for full redemption (it's the one that closes the position).
+#[test]
+#[expected_failure(abort_code = deposit_router::EExceedsPosition)]
+fun test_withdraw_partial_rejects_full_amount() {
+    let mut ctx      = tx_context::dummy();
+    let mut registry = share_token::create_for_testing(&mut ctx);
+    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
+    let mut ib       = ib_credit::create_for_testing(&mut ctx);
+    let rp           = risk_params::create_for_testing(&mut ctx);
+    let config       = spot_router::create_for_testing(&mut ctx);
+
+    let usdc = coin::mint_for_testing<USDC>(10_000_000, &mut ctx);
+    let (mut pos, shares) = deposit_router::deposit_usdc_mock_returning(
+        usdc, 1, &config, &mut registry, &mut pool, &rp, &mut ctx,
+    );
+
+    let dusdc_out = deposit_router::withdraw_partial(
+        &mut pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+    );
+
+    sui::test_utils::destroy(dusdc_out);
+    deposit_router::destroy_position_for_testing(pos);
+    ib_credit::destroy_for_testing(ib);
+    deposit_router::destroy_pool_for_testing(pool);
+    share_token::destroy_for_testing(registry);
+    risk_params::destroy_for_testing(rp);
+    spot_router::destroy_for_testing(config);
+}
+
+// ─── test_withdraw_partial_rejects_leveraged_position ────────────────────────
+#[test]
+#[expected_failure(abort_code = deposit_router::ELeveragedNoPartial)]
+fun test_withdraw_partial_rejects_leveraged_position() {
+    let mut ctx      = tx_context::dummy();
+    let mut registry = share_token::create_for_testing(&mut ctx);
+    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
+    let mut ib       = ib_credit::create_for_testing(&mut ctx);
+    let rp           = risk_params::create_for_testing(&mut ctx);
+
+    let vsui = coin::mint_for_testing<VSUI>(1_000_000_000, &mut ctx);
+    let (mut pos, mut shares) = deposit_router::deposit_vsui_mock_returning(
+        vsui, 5_000, 1_000_000_000, 1, &mut registry, &mut pool, &rp, &mut ctx,
+    );
+
+    let partial = shares.split(100, &mut ctx);
+    let dusdc_out = deposit_router::withdraw_partial(
+        &mut pos, partial, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+    );
+
+    sui::test_utils::destroy(dusdc_out);
+    sui::test_utils::destroy(shares);
+    deposit_router::destroy_position_for_testing(pos);
+    ib_credit::destroy_for_testing(ib);
+    deposit_router::destroy_pool_for_testing(pool);
+    share_token::destroy_for_testing(registry);
+    risk_params::destroy_for_testing(rp);
 }
 
 // ─── test_lsd_deposit_with_leverage_respects_max_ltv ─────────────────────────
@@ -221,6 +358,27 @@ fun test_nav_isolation_usdc_vs_lsd() {
 
     deposit_router::destroy_position_for_testing(pos_a);
     deposit_router::destroy_position_for_testing(pos_b);
+    deposit_router::destroy_pool_for_testing(pool);
+    share_token::destroy_for_testing(registry);
+    risk_params::destroy_for_testing(rp);
+    spot_router::destroy_for_testing(config);
+}
+
+// ─── test_rfbtc_deposit_mock ──────────────────────────────────────────────────
+#[test]
+fun test_rfbtc_deposit_mock() {
+    use reflux::rfbtc;
+    let mut ctx      = tx_context::dummy();
+    let mut registry = share_token::create_for_testing(&mut ctx);
+    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
+    let rp           = risk_params::create_for_testing(&mut ctx);
+    let config       = spot_router::create_for_testing(&mut ctx);
+
+    let rfbtc = rfbtc::create_for_testing(1_000_000, &mut ctx);
+    deposit_router::deposit_rfbtc_mock(rfbtc, 1, &config, &mut registry, &mut pool, &rp, &mut ctx);
+
+    assert!(deposit_router::pool_balance(&pool) == 1_000_000, 0);
+
     deposit_router::destroy_pool_for_testing(pool);
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);

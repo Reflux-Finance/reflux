@@ -1,9 +1,11 @@
 /// Module 12 — deposit_router: user-facing deposit / withdraw entry points.
 ///
 /// Deposit flow:
+///   deposit_dusdc → deposit_dusdc_impl directly (NO external deps — works now)
 ///   deposit_usdc  → spot_router::usdc_to_dusdc (EXTERNAL-PENDING) → mint rfUSD
+///   deposit_sui   → spot_router::sui_to_dusdc (EXTERNAL-PENDING) → deposit_dusdc_impl
 ///   deposit_vsui  → lsd_adapter rate check → leverage::borrow_* (EXTERNAL-PENDING) → mint rfUSD
-///   deposit_sui   → staking_adapter (EXTERNAL-PENDING) → deposit_vsui path
+///   deposit_sui_lsp → staking_adapter (EXTERNAL-PENDING) → deposit_vsui path (Tier 2)
 ///
 /// All production entry points that require EXTERNAL-PENDING calls abort at
 /// runtime.  Test-only `*_mock` variants use mock coins and work fully.
@@ -22,8 +24,12 @@ use reflux::lsd_adapter::{Self, LsdRateRegistry};
 use reflux::leverage;
 use reflux::risk_params::{Self, RiskParams};
 use reflux::share_token::{Self, ShareRegistry, SHARE_TOKEN};
+use reflux::rfbtc::RFBTC;
 use reflux::spot_router::{Self, SpotRouterConfig};
-use reflux::types::{USDC, DUSDC, VSUI, AFSUI, HASUI};
+use afsui::afsui::AFSUI;
+use dusdc::dusdc::DUSDC;
+use reflux::types::{VSUI, HASUI};
+use usdc::usdc::USDC;
 use sui::balance::{Self, Balance};
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
@@ -41,6 +47,9 @@ const EPaused:              u64 = 0;
 const ENotOwner:            u64 = 1;
 const EInvalidOutputPref:   u64 = 2;
 const EBorrowExceedsMaxLtv: u64 = 3;
+const EZeroShares:          u64 = 4;
+const EExceedsPosition:     u64 = 5;
+const ELeveragedNoPartial:  u64 = 6;
 const EExternalPending:     u64 = 99;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
@@ -106,6 +115,15 @@ public struct WithdrawalQueued has copy, drop {
     claimable_after_roll: u64,
 }
 
+public struct PartialWithdrawn has copy, drop {
+    owner:            address,
+    position_id:      ID,
+    shares_burned:    u64,
+    shares_remaining: u64,
+    dusdc_out:        u64,
+    instant:          bool,
+}
+
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 fun init(ctx: &mut TxContext) {
@@ -115,20 +133,90 @@ fun init(ctx: &mut TxContext) {
     });
 }
 
-// ─── Production deposits (EXTERNAL-PENDING) ──────────────────────────────────
+// ─── Production deposits ──────────────────────────────────────────────────────
 
-/// Deposit plain USDC.  Internally swaps USDC → dUSDC via spot_router.
-/// EXTERNAL-PENDING: spot_router::usdc_to_dusdc aborts until DR-1 resolves.
-public fun deposit_usdc(
-    _usdc:       Coin<USDC>,
-    _min_shares: u64,
-    _config:     &SpotRouterConfig,
-    _registry:   &mut ShareRegistry,
-    _pool:       &mut DepositPool,
-    _rp:         &RiskParams,
-    _ctx:        &mut TxContext,
+/// Deposit dUSDC directly — no swap required.
+/// Works on testnet today: dUSDC is available via the DeepBook faucet.
+/// The caller is responsible for any prior asset → dUSDC conversion
+/// (e.g. SUI → dUSDC via a DEX in the same PTB before calling this).
+public fun deposit_dusdc(
+    dusdc:      Coin<DUSDC>,
+    min_shares: u64,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
 ) {
-    abort EExternalPending
+    let (pos, shares) = deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_ORIGINAL, pool, registry, rp, ctx,
+    );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
+}
+
+/// Deposit native SUI: SUI → dUSDC via the on-chain CPAMM → rfUSD.
+/// Requires the SUI/dUSDC pool to be seeded with liquidity (see spot_router).
+public fun deposit_sui(
+    sui:        Coin<sui::sui::SUI>,
+    min_shares: u64,
+    config:     &mut SpotRouterConfig,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
+) {
+    let dusdc = spot_router::sui_to_dusdc(config, sui, 1, ctx);
+    let (pos, shares) = deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_ORIGINAL, pool, registry, rp, ctx,
+    );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
+}
+
+/// Deposit rfBTC: rfBTC → dUSDC via the on-chain CPAMM → rfUSD.
+/// Requires the rfBTC/dUSDC pool to be seeded with liquidity (see spot_router).
+public fun deposit_rfbtc(
+    rfbtc:      Coin<RFBTC>,
+    min_shares: u64,
+    config:     &mut SpotRouterConfig,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
+) {
+    let dusdc = spot_router::rfbtc_to_dusdc(config, rfbtc, 1, ctx);
+    let (pos, shares) = deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_ORIGINAL, pool, registry, rp, ctx,
+    );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
+}
+
+/// Deposit plain USDC: USDC → dUSDC via the 1:1 treasury → rfUSD.
+/// Requires the USDC/dUSDC treasury to be seeded with dUSDC reserves (see spot_router).
+public fun deposit_usdc(
+    usdc:       Coin<USDC>,
+    min_shares: u64,
+    config:     &mut SpotRouterConfig,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
+) {
+    let dusdc = spot_router::usdc_to_dusdc(config, usdc, 1, ctx);
+    let (pos, shares) = deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_USDC, pool, registry, rp, ctx,
+    );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
 }
 
 /// Deposit vSUI collateral (with optional leverage).
@@ -162,8 +250,9 @@ public fun deposit_afsui(
     abort EExternalPending
 }
 
-/// Deposit native SUI → stake to vSUI → deposit_vsui. EXTERNAL-PENDING.
-public fun deposit_sui(
+/// Deposit native SUI → stake to vSUI → deposit_vsui. EXTERNAL-PENDING (Tier 2).
+/// For direct SUI→dUSDC without staking, use deposit_sui above.
+public fun deposit_sui_lsp(
     _sui:          Coin<sui::sui::SUI>,
     _leverage_bps: u64,
     _min_shares:   u64,
@@ -247,6 +336,70 @@ public fun withdraw(
     coin_out
 }
 
+/// Burn a partial amount of rfUSD shares against a position, without closing it.
+/// - `pos` stays alive with `shares_minted` reduced by the burned amount — use
+///   `withdraw` instead once you're redeeming the full remaining balance.
+/// - Same instant/queued exit logic as `withdraw`.
+/// - Leveraged positions (collateral/debt set) aren't supported yet — partial
+///   redemption against borrowed capital needs LTV-aware accounting that
+///   doesn't exist until the leverage loop (Tier 2) ships.
+public fun withdraw_partial(
+    pos:         &mut VaultPosition,
+    shares:      Coin<SHARE_TOKEN>,
+    min_out:     u64,
+    next_roll_id: u64,
+    pool:        &mut DepositPool,
+    ib:          &mut IBCreditState,
+    registry:    &mut ShareRegistry,
+    rp:          &RiskParams,
+    ctx:         &mut TxContext,
+): Coin<DUSDC> {
+    assert!(ctx.sender() == pos.owner, ENotOwner);
+    assert!(pos.collateral.is_none() && pos.debt.is_none(), ELeveragedNoPartial);
+
+    let shares_in = shares.value();
+    assert!(shares_in > 0, EZeroShares);
+    assert!(shares_in < pos.shares_minted, EExceedsPosition);
+
+    // Burn rfUSD and compute dUSDC entitlement
+    let dusdc_amount = share_token::burn_shares(registry, shares, min_out, ctx);
+    pos.shares_minted = pos.shares_minted - shares_in;
+
+    // Attempt instant exit: try ib_credit first (identical to `withdraw`)
+    let parked = ib_credit::parked_amount(ib);
+    let vault_nav = pool.dusdc.value() + parked;
+    let coin_out = if (parked >= dusdc_amount) {
+        ib_credit::fund_instant_exit(ib, dusdc_amount, vault_nav, rp, ctx)
+    } else if (pool.dusdc.value() >= dusdc_amount) {
+        coin::take(&mut pool.dusdc, dusdc_amount, ctx)
+    } else {
+        let pw = PendingWithdrawal {
+            id:                   object::new(ctx),
+            owner:                pos.owner,
+            dusdc_amount,
+            claimable_after_roll: next_roll_id + 1,
+        };
+        event::emit(WithdrawalQueued {
+            owner: pos.owner,
+            dusdc_amount,
+            claimable_after_roll: pw.claimable_after_roll,
+        });
+        transfer::transfer(pw, pos.owner);
+        coin::zero<DUSDC>(ctx)
+    };
+
+    let dusdc_out = coin_out.value();
+    event::emit(PartialWithdrawn {
+        owner:            pos.owner,
+        position_id:      object::id(pos),
+        shares_burned:    shares_in,
+        shares_remaining: pos.shares_minted,
+        dusdc_out,
+        instant:          dusdc_out > 0,
+    });
+    coin_out
+}
+
 /// Claim a PendingWithdrawal once the roll counter has advanced past claimable_after_roll.
 public fun claim_pending_withdrawal(
     pw:         PendingWithdrawal,
@@ -288,7 +441,7 @@ fun deposit_dusdc_impl(
     registry:   &mut ShareRegistry,
     rp:         &RiskParams,
     ctx:        &mut TxContext,
-) {
+): (VaultPosition, Coin<SHARE_TOKEN>) {
     assert!(!risk_params::paused(rp), EPaused);
     assert!(pref <= OUTPUT_SUI, EInvalidOutputPref);
     let dusdc_value = dusdc.value();
@@ -302,15 +455,14 @@ fun deposit_dusdc_impl(
         collateral,
         debt,
         shares_minted,
-        deposit_ts_ms:    0, // production will pass clock.timestamp_ms()
+        deposit_ts_ms:    ctx.epoch_timestamp_ms(),
         preferred_output: pref,
     };
     let position_id = object::id(&pos);
     event::emit(Deposited {
         owner: ctx.sender(), position_id, dusdc_value, shares_out: shares_minted, has_leverage,
     });
-    transfer::public_transfer(shares, ctx.sender());
-    transfer::transfer(pos, ctx.sender());
+    (pos, shares)
 }
 
 // ─── Test-only mock deposit variants ─────────────────────────────────────────
@@ -327,11 +479,34 @@ public fun deposit_usdc_mock(
     ctx:        &mut TxContext,
 ) {
     let dusdc = spot_router::usdc_to_dusdc_mock(config, usdc, 1, ctx);
-    deposit_dusdc_impl(
+    let (pos, shares) = deposit_dusdc_impl(
         dusdc, min_shares,
         std::option::none(), std::option::none(),
         OUTPUT_USDC, pool, registry, rp, ctx,
     );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
+}
+
+/// Mock rfBTC deposit using spot_router mock (1:1 swap).
+#[test_only]
+public fun deposit_rfbtc_mock(
+    rfbtc:      Coin<RFBTC>,
+    min_shares: u64,
+    config:     &SpotRouterConfig,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
+) {
+    let dusdc = spot_router::rfbtc_to_dusdc_mock(config, rfbtc, 1, ctx);
+    let (pos, shares) = deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_ORIGINAL, pool, registry, rp, ctx,
+    );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
 }
 
 /// Mock vSUI deposit: converts LSD amount via supplied price_e9, optional leverage.
@@ -373,11 +548,58 @@ public fun deposit_vsui_mock(
     // Consume the LSD coin (mocked — no real custody in tests)
     sui::test_utils::destroy(vsui);
 
-    deposit_dusdc_impl(
+    let (pos, shares) = deposit_dusdc_impl(
         dusdc, min_shares,
         coll_rec, debt_rec,
         OUTPUT_ORIGINAL, pool, registry, rp, ctx,
     );
+    transfer::public_transfer(shares, ctx.sender());
+    transfer::transfer(pos, ctx.sender());
+}
+
+/// Same as `deposit_vsui_mock` but returns the position/shares instead of
+/// transferring — for tests that need to hold both in the same call frame.
+#[test_only]
+public fun deposit_vsui_mock_returning(
+    vsui:          Coin<VSUI>,
+    leverage_bps:  u64,
+    price_e9:      u64,
+    min_shares:    u64,
+    registry:      &mut ShareRegistry,
+    pool:          &mut DepositPool,
+    rp:            &RiskParams,
+    ctx:           &mut TxContext,
+): (VaultPosition, Coin<SHARE_TOKEN>) {
+    let lsd_amount    = vsui.value();
+    let coll_val      = mul_div(lsd_amount, price_e9, 1_000_000_000);
+    let borrow_dusdc  = if (leverage_bps > 0) { mul_div(coll_val, leverage_bps, 10_000) } else { 0 };
+
+    if (borrow_dusdc > 0) {
+        let ltv = leverage::compute_ltv_bps(lsd_amount, borrow_dusdc, price_e9);
+        assert!(ltv <= risk_params::max_ltv_bps(rp), EBorrowExceedsMaxLtv);
+    };
+
+    let total_dusdc = coll_val + borrow_dusdc;
+    let dusdc       = coin::mint_for_testing<DUSDC>(total_dusdc, ctx);
+
+    let coll_rec = std::option::some(CollateralRecord {
+        lsd_type:       b"vsui",
+        lsd_amount,
+        entry_price_e9: price_e9,
+    });
+    let debt_rec = if (borrow_dusdc > 0) {
+        std::option::some(DebtRecord { debt_dusdc: borrow_dusdc })
+    } else {
+        std::option::none()
+    };
+
+    sui::test_utils::destroy(vsui);
+
+    deposit_dusdc_impl(
+        dusdc, min_shares,
+        coll_rec, debt_rec,
+        OUTPUT_ORIGINAL, pool, registry, rp, ctx,
+    )
 }
 
 // ─── Internal math ────────────────────────────────────────────────────────────
@@ -456,10 +678,31 @@ public fun deposit_usdc_mock_returning(
         collateral:       std::option::none(),
         debt:             std::option::none(),
         shares_minted,
-        deposit_ts_ms:    0,
+        deposit_ts_ms:    ctx.epoch_timestamp_ms(),
         preferred_output: OUTPUT_USDC,
     };
     (pos, shares)
+}
+
+/// Same as `deposit_usdc` (the real, non-mock production function — exercises
+/// the actual `spot_router::usdc_to_dusdc` swap) but returns the position and
+/// shares instead of transferring, so tests can assert on `preferred_output`.
+#[test_only]
+public fun deposit_usdc_returning(
+    usdc:       Coin<USDC>,
+    min_shares: u64,
+    config:     &mut SpotRouterConfig,
+    registry:   &mut ShareRegistry,
+    pool:       &mut DepositPool,
+    rp:         &RiskParams,
+    ctx:        &mut TxContext,
+): (VaultPosition, Coin<SHARE_TOKEN>) {
+    let dusdc = spot_router::usdc_to_dusdc(config, usdc, 1, ctx);
+    deposit_dusdc_impl(
+        dusdc, min_shares,
+        std::option::none(), std::option::none(),
+        OUTPUT_USDC, pool, registry, rp, ctx,
+    )
 }
 
 /// Seed the pool directly with minted dUSDC — for vault roll tests.
@@ -470,6 +713,19 @@ public fun seed_pool_for_testing(pool: &mut DepositPool, amount: u64, ctx: &mut 
 }
 
 #[test_only]
+public fun mint_dusdc_for_testing(amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
+    coin::mint_for_testing<DUSDC>(amount, ctx)
+}
+
+#[test_only]
 public fun e_paused(): u64 { EPaused }
 #[test_only]
 public fun e_borrow_exceeds_max_ltv(): u64 { EBorrowExceedsMaxLtv }
+#[test_only]
+public fun e_zero_shares(): u64 { EZeroShares }
+#[test_only]
+public fun e_exceeds_position(): u64 { EExceedsPosition }
+#[test_only]
+public fun e_leveraged_no_partial(): u64 { ELeveragedNoPartial }
+#[test_only]
+public fun position_preferred_output(p: &VaultPosition): u8 { p.preferred_output }
