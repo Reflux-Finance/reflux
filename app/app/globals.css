@@ -2,26 +2,198 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Backgrounds */
+  --bg-void:    #080C10;
+  --bg-panel:   #0D1117;
+  --bg-elevated:#141B22;
+  --bg-input:   #1C2430;
+
+  /* Teal accent */
+  --teal:         #00D4C8;
+  --teal-light:   #33DDD8;
+  --teal-dim:     rgba(0, 212, 200, 0.10);
+  --teal-border:  rgba(0, 212, 200, 0.25);
+
+  /* Amber accent */
+  --amber:        #F5A623;
+  --amber-dim:    rgba(245, 166, 35, 0.12);
+
+  /* Status */
+  --green:        #22C55E;
+  --orange:       #F97316;
+  --red:          #EF4444;
+  --blue:         #3B82F6;
+
+  /* Text */
+  --text-primary:   #E8EDF2;
+  --text-secondary: #8B98A8;
+  --text-muted:     #4A5568;
+
+  /* Borders */
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong:  rgba(255, 255, 255, 0.18);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ─── Base ──────────────────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-void);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* ─── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 5px; height: 5px; }
+::-webkit-scrollbar-track      { background: var(--bg-void); }
+::-webkit-scrollbar-thumb      { background: #2D3748; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover{ background: #4A5568; }
+
+/* ─── Custom utilities ──────────────────────────────────────────────────────── */
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  .text-balance { text-wrap: balance; }
+
+  /* Panel card */
+  .card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
   }
+  .card-elevated {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+
+  /* Teal glow on interactive cards */
+  .card-interactive {
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .card-interactive:hover {
+    border-color: var(--teal-border);
+    box-shadow: 0 0 0 1px var(--teal-border), 0 4px 24px rgba(0,212,200,0.06);
+  }
+
+  /* Monospace data */
+  .font-data { font-family: var(--font-ibm-plex-mono, ui-monospace, monospace); }
+
+  /* Status dot */
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot-green  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+  .status-dot-amber  { background: var(--amber);  box-shadow: 0 0 6px var(--amber); }
+  .status-dot-red    { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+
+  /* Regime badge */
+  .regime-low     { background: rgba(59,130,246,0.15); color: #93C5FD; border: 1px solid rgba(59,130,246,0.3); }
+  .regime-neutral { background: rgba(139,152,168,0.12); color: #8B98A8; border: 1px solid rgba(139,152,168,0.2); }
+  .regime-high    { background: rgba(245,166,35,0.12);  color: #FCD34D; border: 1px solid rgba(245,166,35,0.3); }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, #E8EDF2 0%, var(--teal-light) 60%, var(--teal) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Teal CTA button */
+  .btn-teal {
+    background: var(--teal);
+    color: #080C10;
+    font-weight: 600;
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    transition: background 150ms, box-shadow 150ms;
+  }
+  .btn-teal:hover {
+    background: var(--teal-light);
+    box-shadow: 0 0 20px rgba(0,212,200,0.25);
+  }
+
+  /* Ghost button */
+  .btn-ghost {
+    border: 1px solid var(--border-default);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    transition: border-color 150ms, color 150ms;
+  }
+  .btn-ghost:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+
+  /* Input */
+  .input-field {
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 150ms;
+  }
+  .input-field:focus {
+    border-color: var(--teal-border);
+  }
+
+  /* Number large */
+  .metric-value  { font-size: 1.875rem; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+  .metric-label  { font-size: 0.6875rem; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* Allocation bar segment */
+  .alloc-bar { height: 6px; border-radius: 3px; transition: width 500ms ease; }
+}
+
+/* ─── CSS-only hover helpers (safe in Server Components) ───────────────────── */
+
+/* Top-nav link */
+.nav-link {
+  color: var(--text-secondary);
+  transition: color 150ms, background-color 150ms;
+  border-radius: 6px;
+}
+.nav-link:hover {
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Any anchor/button that should turn teal on hover */
+.hover-teal {
+  color: var(--text-muted);
+  transition: color 150ms;
+}
+.hover-teal:hover { color: var(--teal); }
+
+/* Table row hover */
+.tr-hover { transition: background-color 150ms; }
+.tr-hover:hover { background-color: rgba(255, 255, 255, 0.025); }
+
+/* Wallet-option button (teal border + dim background on hover) */
+.wallet-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  transition: border-color 150ms, background-color 150ms;
+}
+.wallet-btn:hover {
+  border-color: var(--teal-border);
+  background-color: var(--teal-dim);
 }
