@@ -21,9 +21,9 @@ use reflux::deposit_router::{Self, DepositPool};
 use reflux::ib_credit::{Self, IBCreditState};
 use reflux::keeper_auth::{Self, KeeperAuth};
 use reflux::predict_strategy;
-use reflux::risk_params::RiskParams;
+use reflux::risk_params::{AdminCap, RiskParams};
 use reflux::share_token::{Self, ShareRegistry};
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
 use sui::event;
@@ -86,6 +86,56 @@ public fun roll_positions(
     let _settled: Coin<DUSDC> = predict_strategy::redeem_all_settled(ctx);
     // Unreachable until external dep lands; abort prevents further execution.
     abort EExternalPending
+}
+
+// ─── Admin demo roll (testnet only) ──────────────────────────────────────────
+
+/// Admin-gated demo roll: runs the allocator and emits AllocationDecision /
+/// RollCompleted without requiring a settled Predict oracle.  Meant for testnet
+/// demos while `predict_strategy::redeem_all_settled` is EXTERNAL-PENDING.
+/// On mainnet the keeper's `roll_positions` supersedes this.
+public fun roll_demo(
+    _admin:    &AdminCap,
+    state:     &mut VaultState,
+    pool:      &mut DepositPool,
+    registry:  &mut ShareRegistry,
+    policy:    &mut AllocationPolicy,
+    ib:        &mut IBCreditState,
+    rp:        &RiskParams,
+    atm_iv_e4: u64,
+    clock:     &Clock,
+    ctx:       &mut TxContext,
+) {
+    // Step 6: allocator computes targets and emits AllocationDecision
+    let total_nav  = deposit_router::pool_balance(pool) + ib_credit::parked_amount(ib);
+    let ib_balance = ib_credit::parked_amount(ib);
+    let targets    = allocator::compute_targets(policy, total_nav, atm_iv_e4, ib_balance, rp, clock);
+
+    // Step 7 (partial): park idle slice in IB
+    let idle_amount = allocator::ib_idle_dusdc(&targets);
+    if (idle_amount > 0 && deposit_router::pool_balance(pool) >= idle_amount) {
+        let idle_coin = deposit_router::take_capital(pool, idle_amount, ctx);
+        ib_credit::park_idle(ib, idle_coin);
+    };
+
+    // Step 8: update NAV
+    let final_nav = deposit_router::pool_balance(pool) + ib_credit::parked_amount(ib);
+    share_token::update_nav(registry, final_nav);
+
+    // Step 9: emit RollCompleted
+    let prev_nav = state.last_nav_dusdc;
+    let pnl = if (final_nav >= prev_nav) { final_nav - prev_nav } else { 0 };
+    event::emit(RollCompleted {
+        roll_id:       state.roll_count,
+        timestamp_ms:  clock.timestamp_ms(),
+        nav_dusdc:     final_nav,
+        nav_per_share: share_token::nav_per_share_e9(registry),
+        pnl_dusdc:     pnl,
+    });
+
+    state.last_nav_dusdc = final_nav;
+    state.last_roll_ts   = clock.timestamp_ms();
+    state.roll_count     = state.roll_count + 1;
 }
 
 // ─── Test-only mock roll ──────────────────────────────────────────────────────
