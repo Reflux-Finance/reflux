@@ -81,7 +81,7 @@ export function replayExpiries(
   const ibYieldBps = cfg.ibYieldBps ?? 300n;
 
   let navDusdc = initialNavDusdc;
-  let totalSupply = initialNavDusdc; // start 1:1
+  const totalSupply = initialNavDusdc; // start 1:1
   const steps: SimulationStep[] = [];
 
   for (let i = 0; i < expiries.length; i++) {

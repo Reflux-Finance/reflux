@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flatIvScenario, ivSpikeScenario, bearMarketScenario, oscillatingIvScenario, buildAllScenarios } from './scenarios.js';
+import { flatIvScenario, ivSpikeScenario, bearMarketScenario, buildAllScenarios } from './scenarios.js';
 
 describe('flatIvScenario', () => {
   it('produces exactly N expiries', () => {

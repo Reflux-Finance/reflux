@@ -5,7 +5,6 @@ import {
   PositionsResponseSchema,
   ManagerPositionsSchema,
   nearestActiveOracle,
-  fetchSviParams,
 } from './predict.js';
 
 // ─── Oracle schemas ───────────────────────────────────────────────────────────

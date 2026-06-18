@@ -15,6 +15,9 @@ export interface SettlementEvent {
   oracle: Oracle;
 }
 
+// Typed EventEmitter via declaration merging — safe here since SettlementWatcher
+// has no static members that could collide with the interface.
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export declare interface SettlementWatcher {
   on(event: 'settlement', listener: (e: SettlementEvent) => void): this;
   on(event: 'error', listener: (err: Error) => void): this;
@@ -22,6 +25,7 @@ export declare interface SettlementWatcher {
   emit(event: 'error', err: Error): boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class SettlementWatcher extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
