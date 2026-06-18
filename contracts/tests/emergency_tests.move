@@ -4,7 +4,7 @@ module reflux::emergency_tests;
 use reflux::emergency;
 use reflux::leverage;
 use reflux::risk_params;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin;
 use sui::tx_context;
 

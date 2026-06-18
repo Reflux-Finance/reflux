@@ -3,7 +3,7 @@ module reflux::ib_credit_tests;
 
 use reflux::ib_credit;
 use reflux::risk_params;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin;
 use sui::tx_context;
 

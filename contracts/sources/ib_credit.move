@@ -18,7 +18,7 @@
 module reflux::ib_credit;
 
 use reflux::risk_params::RiskParams;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin};
 use sui::event;

@@ -13,7 +13,7 @@ module reflux::emergency;
 
 use reflux::leverage::{Self, CollateralPosition};
 use reflux::risk_params::{Self, RiskParams};
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin::Coin;
 use sui::event;
 

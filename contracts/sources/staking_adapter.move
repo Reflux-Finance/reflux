@@ -9,7 +9,8 @@
 ///                       `redeemable_after_epoch` to enforce the LSP unbonding delay.
 module reflux::staking_adapter;
 
-use reflux::types::{VSUI, AFSUI, HASUI};
+use afsui::afsui::AFSUI;
+use reflux::types::{VSUI, HASUI};
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin};
 use sui::event;

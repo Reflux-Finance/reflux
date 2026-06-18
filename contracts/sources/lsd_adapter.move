@@ -12,7 +12,8 @@
 module reflux::lsd_adapter;
 
 use reflux::risk_params::RiskParams;
-use reflux::types::{VSUI, AFSUI, HASUI};
+use afsui::afsui::AFSUI;
+use reflux::types::{VSUI, HASUI};
 use sui::clock::Clock;
 use sui::event;
 

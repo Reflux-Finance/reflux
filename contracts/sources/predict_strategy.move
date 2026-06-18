@@ -10,7 +10,7 @@
 module reflux::predict_strategy;
 
 use reflux::risk_params::RiskParams;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin::{Self, Coin};
 use sui::event;
 

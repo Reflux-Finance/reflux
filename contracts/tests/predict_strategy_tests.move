@@ -3,7 +3,7 @@ module reflux::predict_strategy_tests;
 
 use reflux::predict_strategy;
 use reflux::risk_params;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin;
 use sui::tx_context;
 

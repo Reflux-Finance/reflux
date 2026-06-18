@@ -11,7 +11,7 @@
 module reflux::leverage;
 
 use reflux::risk_params::RiskParams;
-use reflux::types::DUSDC;
+use dusdc::dusdc::DUSDC;
 use sui::coin::{Self, Coin};
 use sui::event;
 
