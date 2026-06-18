@@ -114,7 +114,7 @@ shares_minted }`. `PLP` is the OTW coin in
 
 ### 1.7 ⚠️ `predict::redeem_supply` DOES NOT EXIST — it is `withdraw`
 
-CLAUDE.md names `predict::redeem_supply`; the actual exit in this branch is:
+the actual exit in this branch is:
 
 ```move
 public fun withdraw<Quote>(
@@ -216,7 +216,7 @@ Base: `https://predict-server.testnet.mystenlabs.com` — verified live
 2026-06-11 (HTTP 200). Routes confirmed from
 `crates/predict-server/src/server.rs:41-69`:
 
-| Purpose | Documented in CLAUDE.md | ACTUAL route |
+| Purpose | ACTUAL route |
 |---|---|---|
 | List oracles | `/oracles` | `/oracles` ✅ |
 | SVI params | `/oracle/{id}/svi` ❌ 404 | `/oracles/{id}/svi` (history), `/oracles/{id}/svi/latest` |
