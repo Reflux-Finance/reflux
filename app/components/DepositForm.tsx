@@ -1068,7 +1068,7 @@ export function DepositForm() {
   async function handleSubmit() {
     if (!asset) return;
     if (!auth.address) {
-      setError('Connect your wallet to deposit.');
+      setError('Sign in to deposit.');
       return;
     }
     if (insufficientBalance) {
@@ -1185,7 +1185,7 @@ export function DepositForm() {
           style={{ background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', color: '#F5A623' }}
         >
           <span>⚠</span>
-          <span>Connect your wallet to deposit. Your position is tracked on-chain.</span>
+          <span>Sign in to deposit — wallet or Google (zkLogin). Your position is tracked on-chain.</span>
         </div>
       )}
 

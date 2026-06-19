@@ -55,7 +55,7 @@ export default function LoginPage() {
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
-          Connect to Reflux
+          Login to Reflux
         </h1>
         <p className="text-sm leading-relaxed max-w-sm mx-auto" style={{ color: 'var(--text-secondary)' }}>
           Deposit any Sui asset. Receive{' '}
@@ -234,7 +234,7 @@ export default function LoginPage() {
       {/* Risk dashboard CTA */}
       <div className="text-center">
         <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-          Explore the protocol before connecting
+          Explore the protocol before signing up
         </p>
         <Link href="/risk" className="btn-ghost text-xs px-5 py-2.5">
           View risk dashboard — no wallet needed

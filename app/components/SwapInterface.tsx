@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   useCurrentAccount,
   useSignAndExecuteTransaction,
@@ -389,6 +390,7 @@ function SlippagePanel({
 // ─── Main SwapInterface ───────────────────────────────────────────────────────
 
 export function SwapInterface() {
+  const router  = useRouter();
   const auth    = useAuth();
   const account = useCurrentAccount();
   const flow    = useEnokiFlow();
@@ -554,7 +556,7 @@ export function SwapInterface() {
   }
 
   async function handleFaucet() {
-    if (!auth.address) { setError('Connect wallet first'); return; }
+    if (!auth.address) { setError('Sign in first'); return; }
     setLoadingFaucet(true);
     setError('');
     setTxDigest('');
@@ -576,7 +578,7 @@ export function SwapInterface() {
   }
 
   async function handleSwap() {
-    if (!auth.address) { setError('Connect wallet first'); return; }
+    if (!auth.address) { setError('Sign in first'); return; }
     const fromNum = parseFloat(fromAmount);
     if (isNaN(fromNum) || fromNum <= 0) { setError('Enter an amount'); return; }
     if (!bestFromCoin) { setError(`No ${fromToken.symbol} coins found in wallet`); return; }
@@ -830,12 +832,13 @@ export function SwapInterface() {
         {/* CTA */}
         <div className="px-4 pb-4 space-y-2">
           {!auth.address ? (
-            <div
-              className="w-full py-3 rounded-xl text-center text-sm font-semibold"
+            <button
+              onClick={() => router.push('/login')}
+              className="w-full py-3 rounded-xl text-center text-sm font-semibold transition-colors"
               style={{ background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.25)', color: '#F5A623' }}
             >
-              Connect wallet to swap
-            </div>
+              Sign in to swap
+            </button>
           ) : (
             <button
               onClick={() => void handleSwap()}

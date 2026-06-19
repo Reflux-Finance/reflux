@@ -119,11 +119,11 @@ export function WalletButton() {
     setTimeout(() => setCopied(false), 1500);
   }, [address]);
 
-  // Static "Connect" during SSR / hydration pass to avoid mismatch
+  // Static "Sign in" during SSR / hydration pass to avoid mismatch
   if (!mounted) {
     return (
       <button className="btn-teal text-xs px-4 py-2 rounded-lg font-semibold">
-        Connect
+        Sign in
       </button>
     );
   }
@@ -134,7 +134,7 @@ export function WalletButton() {
         onClick={() => router.push('/login')}
         className="btn-teal text-xs px-4 py-2 rounded-lg font-semibold"
       >
-        Connect
+        Sign in
       </button>
     );
   }

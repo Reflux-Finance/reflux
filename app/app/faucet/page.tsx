@@ -28,15 +28,18 @@ function ConnectGate() {
       <div className="text-3xl">🔗</div>
       <div>
         <div className="text-base font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-          Connect your wallet
+          Sign in
         </div>
         <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-          Connect to mint testnet assets to your address.
+          Sign in to mint testnet assets to your address.
         </p>
       </div>
       <button onClick={() => router.push('/login')} className="btn-teal px-6 py-2.5 text-sm">
-        Connect wallet
+        Sign in
       </button>
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        Supports Sui Wallet, Slush, Suiet — and Google via zkLogin (no seed phrase).
+      </p>
     </div>
   );
 }
