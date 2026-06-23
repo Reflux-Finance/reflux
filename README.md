@@ -195,6 +195,63 @@ Key properties enforced in Move:
 - **Events for every state transition** — `AllocationDecision`, `DepositEvent`,
   `WithdrawEvent`, `RollEvent`, `RangeStripOpened`, `PlpSupplied`.
 
+  ### Module-by-module breakdown
+
+Edition `2024`, package `reflux`, published at
+`0xee23c4aecc3ab750c2c62ca5861b4fc517f577b0f219d80fa25a42d838a09bea` (v1
+address — coin/event types stay scoped here forever per Sui's upgrade
+rules), upgraded 5× to
+`0x1a2b48289a2f018c2cdb18f330e36a3c1c150abbfca3cae5864931a3bac26967`.
+
+| # | Module | Key objects | Responsibility |
+|---|---|---|---|
+| 1 | [`risk_params.move`](contracts/sources/risk_params.move) | `RiskParams` (shared), `AdminCap` | Single source of truth for every risk limit. Hard cap `absolute_max_ltv_bps = 8000` has no setter, ever. Soft params (`target_ltv_bps`, `max_single_expiry_bps`, `min_ib_buffer_bps`, `max_buffer_draw_bps`, oracle staleness windows) go through `propose_update` → 24h timelock → `execute_update` (callable by anyone once the clock allows it). `pause`/`unpause` gate the allocator only — never withdrawals. |
+| 2 | [`keeper_auth.move`](contracts/sources/keeper_auth.move) | `KeeperAuth` (shared) | Revocable capability for the keeper service. Admin creates one `KeeperAuth` per keeper address; `assert_authorized` is called at the top of every keeper-gated entry point; `revoke` takes effect instantly on the next call. |
+| 3 | [`share_token.move`](contracts/sources/share_token.move) | `ShareRegistry` (shared, wraps `TreasuryCap<RFUSD>`) | rfUSD mint/burn, both `public(package)` so only `vault.move` can call them. Invariant: `total_supply * nav_per_share_e9 == NAV ± rounding`, and rounding always favors the system (mint/burn both round down). `update_nav` recomputes price at the end of every roll. |
+| 4 | [`lsd_adapter.move`](contracts/sources/lsd_adapter.move) | `LsdRateRegistry` (shared) | Exchange-rate oracle for vSUI/afSUI/haSUI (`rate_e9`, staleness-checked against `RiskParams.max_pyth_staleness_ms`). Rates are admin-pushed today; `EXTERNAL-PENDING` swap for live LSP pool reads once object IDs are confirmed. |
+| 5 | [`staking_adapter.move`](contracts/sources/staking_adapter.move) | `WithdrawalReceipt` (owned) | SUI → LSD staking and queued-unstake receipts honoring each LSP's unbonding delay (`redeemable_after_epoch`). All three pool calls (Volo/Aftermath/Haedal) are `EXTERNAL-PENDING`; the public interface is stable so wiring real pools is a drop-in. |
+| 6 | [`spot_router.move`](contracts/sources/spot_router.move) | `SpotRouterConfig` (shared) | Three internal pools in one object: USDC↔dUSDC (1:1 admin-seeded treasury, 0 fee), SUI↔dUSDC and rfBTC↔dUSDC (x·y=k CPAMM, 0.3% fee, u128 intermediates in `cpamm_out` to prevent overflow). This is DR-1's resolution — Reflux owns its own conversion liquidity since no canonical pool exists on `predict-testnet-4-16`. |
+| 7 | [`ib_credit.move`](contracts/sources/ib_credit.move) | `IBCreditState` (shared) | The "Iron Bank" liquidity abstraction — exactly two guarantees: `park_idle`/`unpark` so idle dUSDC always earns, and `fund_instant_exit` for withdrawals under `max_buffer_draw_bps`, settled via `repay_buffer_draw` on the next roll. Coded behind a `LiquiditySource` interface; `venue_tag` 0 = `ReserveSleeveSource` (live default per DR-2), 1 = `IronBankSource` (`EXTERNAL-PENDING`, no public package found on the target branch). |
+| 8 | [`leverage.move`](contracts/sources/leverage.move) | `CollateralPosition` (owned) | Pure, independently tested LTV math (`compute_ltv_bps`, `deleverage_amount`, `needs_deleverage`) plus position lifecycle (`borrow_against_collateral`, `repay_and_release`, `execute_partial_deleverage`). The actual DeepBook Margin calls are `EXTERNAL-PENDING`; the position record never custodies the LSD coins, only metadata for LTV recomputation. |
+| 9 | [`allocator.move`](contracts/sources/allocator.move) | `AllocationPolicy` (shared) | The IV-regime engine. `compute_targets` splits NAV across four arms — `plp`, `range`, `margin_loop`, `ib_idle` — shifting weight by `regime_shift_bps` when ATM IV crosses `iv_low_threshold_e4`/`iv_high_threshold_e4`, clamping `ib_idle` to the `min_ib_buffer_bps` floor. Every call emits `AllocationDecision` with a `reason_code` (`RC_NEUTRAL`, `RC_IV_LOW`, `RC_IV_HIGH`, `RC_HARD_CAP`, `RC_IB_FLOOR`) and before/after weights — this is the transparency surface the `DecisionFeed` renders. Base weights are timelocked the same way as `risk_params`. |
+| 10 | [`predict_strategy.move`](contracts/sources/predict_strategy.move) | `PredictPosition` (owned) | Stable wrapper around `predict::mint` (range strips) and `predict::supply` (PLP). Production calls are `EXTERNAL-PENDING` pending confirmed Predict package addresses; `*_mock` variants (`open_range_strip_mock`, `supply_to_plp_mock`, `redeem_settled_mock_with_yield`) mirror the same interface with `coin::mint_for_testing`, so every roll path is unit-testable today. |
+| 11 | [`emergency.move`](contracts/sources/emergency.move) | — | `emergency_deleverage`, callable by *any* address. `assert_ltv_breach` aborts with `ELtvHealthy` if the position isn't actually breached, so the entry point is safe to leave fully public — there's no incentive or ability to grief a healthy position. No keeper key required to protect the protocol. |
+| 12 | [`deposit_router.move`](contracts/sources/deposit_router.move) | `DepositPool` (shared), `VaultPosition` (owned), `PendingWithdrawal` (owned) | User-facing entry points: `deposit_dusdc` (works today, no external deps), `deposit_usdc`/`deposit_sui`/`deposit_rfbtc` (route through `spot_router`, live), `deposit_vsui`/`deposit_afsui` (collateral + optional leverage, `EXTERNAL-PENDING`). `VaultPosition` tracks each depositor's `CollateralRecord`/`DebtRecord` so yield-source isolation holds in NAV math. Withdrawals burn rfUSD, then check the `ib_credit` instant-exit buffer before falling back to a `PendingWithdrawal` receipt. |
+| 13 | [`vault.move`](contracts/sources/vault.move) | `VaultState` (shared) | The roll orchestrator. `roll_positions` (keeper-gated) runs, atomically: redeem settled Predict positions → repay IB draw → LTV check/deleverage → `allocator::compute_targets` → redeploy capital → `share_token::update_nav` → emit `RollCompleted`. `roll_demo` (admin-gated) and `roll_positions_mock` (test-only) exercise the same order without the still-pending external calls. |
+| — | [`rfbtc.move`](contracts/sources/rfbtc.move) | `RfBtcTreasury` (shared) | Self-issued testnet BTC bridge coin (`RFBTC`), capped faucet (`FAUCET_MAX` = 1,000 rfBTC/call) so no single call drains liquidity. Logged Tier-3-pulled-forward exception — see [rfBTC](#rfbtc--the-testnet-btc-bridge) below. |
+| — | [`types.move`](contracts/sources/types.move) | `VSUI`, `HASUI`, `BTC` witnesses | Stub coin-type witnesses for assets with no live testnet deployment yet (Volo vSUI and Haedal haSUI are mainnet-only; `BTC` stands in for DeepBook's `dbtc` until it's published). |
+
+Every module above follows the same abort-code convention: named `const E*: u64`
+constants (e.g. `ETimelockNotExpired`, `EInsufficientBuffer`, `ELtvHealthy`),
+no bare integer aborts. `EExternalPending: u64 = 99` is the shared sentinel
+used by every still-pending external call site, so `grep -rn EExternalPending
+contracts/sources` is a complete, accurate list of what's wired versus
+staged.
+
+### Dependency pins (`contracts/Move.toml`)
+
+| Package | Source | Address |
+|---|---|---|
+| `dusdc` | local skeleton mirroring `deepbookv3/packages/dusdc` | `0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a` |
+| `usdc` + `usdc_upgrade_service` + `usdc_stablecoin` | local skeleton, Circle canonical testnet USDC | `0xa1ec7fc0…` / `0x252b1dd4…` / `0x346e3233…` |
+| `afsui` | local skeleton, Aftermath Finance testnet LSD | `0x5783fa2298e7301a1c7f99ce45d4a207478fbf3003eca9482ae823d6f6c7cd60` |
+| `dbtc` | commented-out skeleton at `deps/dbtc` | not yet published — see [rfBTC](#rfbtc--the-testnet-btc-bridge) |
+| `predict` / `deepbook` / `deepbook_margin` | git, `MystenLabs/deepbookv3`, branch `predict-testnet-4-16` | staged in `Move.toml` comments, not yet uncommented pending final ABI confirmation |
+
+### Frontend & service stack
+
+| Layer | Stack |
+|---|---|
+| Contracts | Sui Move, edition 2024, `sui move test` |
+| Frontend | Next.js `14.2.35` (App Router), React 18, TypeScript 5, Tailwind CSS 3.4, `@tanstack/react-query` 5 |
+| Wallet / auth | `@mysten/dapp-kit` (browser wallets: Sui Wallet, Slush, Suiet), `@mysten/zklogin` + `@mysten/enoki` (Google OAuth zkLogin) |
+| Chain access | `@mysten/sui` (TS SDK) across `lib`, `app`, `keeper` |
+| Shared SDK (`@reflux/lib`) | Pure PTB builders, Zod-validated indexer/API schemas, bigint-only NAV/risk math, no UI or RPC side effects |
+| Keeper (`@reflux/keeper`) | Node.js 20+, `ioredis` for 7-day-TTL dedup (in-memory fallback for dev/test), `/health`+`/ready` HTTP endpoints |
+| Simulation (`@reflux/sim`) | Node.js, replays the live Predict indexer against `@reflux/lib`'s production allocation math |
+| Validation | Zod on every API route input and every external (indexer/Predict) response |
+| Tooling | pnpm workspaces (`pnpm@9.0.0`), `tsc`, `vitest`, ESLint 8 + `typescript-eslint` 7, Prettier 3 |
+
 ### Build maturity
 
 Reflux has a real testnet deployment, a keeper signing live transactions against DeepBook Predict right now, and 190 passing tests behind it. Here's exactly what's running today versus what's queued next — engineering depth a judge can verify by running the test suite or hitting the live endpoints:
