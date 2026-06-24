@@ -14,6 +14,8 @@ module reflux::lsd_adapter;
 use reflux::risk_params::RiskParams;
 use afsui::afsui::AFSUI;
 use reflux::types::{VSUI, HASUI};
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
 use sui::clock::Clock;
 use sui::event;
 
@@ -21,6 +23,7 @@ use sui::event;
 
 const ERateTooStale: u64 = 0;
 const ERateIsZero:   u64 = 1;
+const EMathOverflow: u64 = 2;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
 
@@ -125,7 +128,7 @@ public fun get_hasui_rate_e9(
 /// Convert an LSD amount to SUI using the stored rate (no staleness check —
 /// use the checked variants above unless you've already verified freshness).
 public fun lsd_to_sui(lsd_amount: u64, rate_e9: u64): u64 {
-    (((lsd_amount as u128) * (rate_e9 as u128)) / 1_000_000_000u128) as u64
+    mul_div(lsd_amount, rate_e9, 1_000_000_000)
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -133,6 +136,15 @@ public fun lsd_to_sui(lsd_amount: u64, rate_e9: u64): u64 {
 fun check_staleness(entry: &RateEntry, rp: &RiskParams, clock: &Clock) {
     let age = clock.timestamp_ms() - entry.updated_at_ms;
     assert!(age <= rp.max_pyth_staleness_ms(), ERateTooStale);
+}
+
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
+fun mul_div(a: u64, b: u64, c: u64): u64 {
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────

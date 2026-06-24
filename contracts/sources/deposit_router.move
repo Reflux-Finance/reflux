@@ -30,6 +30,8 @@ use afsui::afsui::AFSUI;
 use dusdc::dusdc::DUSDC;
 use reflux::types::{VSUI, HASUI};
 use usdc::usdc::USDC;
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
 use sui::balance::{Self, Balance};
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
@@ -50,6 +52,7 @@ const EBorrowExceedsMaxLtv: u64 = 3;
 const EZeroShares:          u64 = 4;
 const EExceedsPosition:     u64 = 5;
 const ELeveragedNoPartial:  u64 = 6;
+const EMathOverflow:        u64 = 7;
 const EExternalPending:     u64 = 99;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
@@ -284,6 +287,7 @@ public fun withdraw(
     ib:          &mut IBCreditState,
     registry:    &mut ShareRegistry,
     rp:          &RiskParams,
+    clock:       &Clock,
     ctx:         &mut TxContext,
 ): Coin<DUSDC> {
     let owner = pos.owner;
@@ -308,7 +312,7 @@ public fun withdraw(
     let vault_nav = pool.dusdc.value() + parked;
     let coin_out = if (parked >= dusdc_amount) {
         // Fast path: served from ib_credit parked balance
-        ib_credit::fund_instant_exit(ib, dusdc_amount, vault_nav, rp, ctx)
+        ib_credit::fund_instant_exit(ib, dusdc_amount, vault_nav, rp, clock, ctx)
     } else if (pool.dusdc.value() >= dusdc_amount) {
         // Pool has enough (pre-first-roll or post-roll residual)
         let out = coin::take(&mut pool.dusdc, dusdc_amount, ctx);
@@ -352,6 +356,7 @@ public fun withdraw_partial(
     ib:          &mut IBCreditState,
     registry:    &mut ShareRegistry,
     rp:          &RiskParams,
+    clock:       &Clock,
     ctx:         &mut TxContext,
 ): Coin<DUSDC> {
     assert!(ctx.sender() == pos.owner, ENotOwner);
@@ -369,7 +374,7 @@ public fun withdraw_partial(
     let parked = ib_credit::parked_amount(ib);
     let vault_nav = pool.dusdc.value() + parked;
     let coin_out = if (parked >= dusdc_amount) {
-        ib_credit::fund_instant_exit(ib, dusdc_amount, vault_nav, rp, ctx)
+        ib_credit::fund_instant_exit(ib, dusdc_amount, vault_nav, rp, clock, ctx)
     } else if (pool.dusdc.value() >= dusdc_amount) {
         coin::take(&mut pool.dusdc, dusdc_amount, ctx)
     } else {
@@ -604,8 +609,13 @@ public fun deposit_vsui_mock_returning(
 
 // ─── Internal math ────────────────────────────────────────────────────────────
 
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
 fun mul_div(a: u64, b: u64, c: u64): u64 {
-    (((a as u128) * (b as u128)) / (c as u128)) as u64
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────

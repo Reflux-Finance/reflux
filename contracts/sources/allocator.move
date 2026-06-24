@@ -22,7 +22,11 @@
 ///   4 RC_IB_FLOOR  — ib_idle raised to min_ib_buffer_bps floor
 module reflux::allocator;
 
-use reflux::risk_params::{AdminCap, RiskParams};
+use reflux::access::AdminRole;
+use reflux::risk_params::RiskParams;
+use openzeppelin_access::access_control::Auth;
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
 use sui::clock::Clock;
 use sui::event;
 
@@ -61,6 +65,7 @@ const EShiftBpsInvalid:    u64 = 2;
 const EAlreadyPending:     u64 = 3;
 const ENoPendingUpdate:    u64 = 4;
 const ETimelockNotExpired: u64 = 5;
+const EMathOverflow:       u64 = 6;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
 
@@ -252,7 +257,7 @@ public(package) fun compute_targets(
 // ─── Admin: timelocked policy update ─────────────────────────────────────────
 
 public fun propose_policy_update(
-    _:                    &AdminCap,
+    _:                    &Auth<AdminRole>,
     policy:               &mut AllocationPolicy,
     base_plp_bps:         u64,
     base_range_bps:       u64,
@@ -294,7 +299,7 @@ public fun execute_policy_update(policy: &mut AllocationPolicy, clock: &Clock) {
     event::emit(PolicyUpdateExecuted { executed_at_ms: now });
 }
 
-public fun cancel_policy_update(_: &AdminCap, policy: &mut AllocationPolicy) {
+public fun cancel_policy_update(_: &Auth<AdminRole>, policy: &mut AllocationPolicy) {
     assert!(policy.pending.is_some(), ENoPendingUpdate);
     let _ = policy.pending.extract();
     event::emit(PolicyUpdateCancelled {});
@@ -322,8 +327,13 @@ public fun roll_counter(p: &AllocationPolicy): u64         { p.roll_counter }
 
 // ─── Internal math ────────────────────────────────────────────────────────────
 
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
 fun mul_div(a: u64, b: u64, c: u64): u64 {
-    (((a as u128) * (b as u128)) / (c as u128)) as u64
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 fun min64(a: u64, b: u64): u64 { if (a < b) { a } else { b } }

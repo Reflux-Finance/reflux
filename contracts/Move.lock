@@ -28,11 +28,29 @@ use_environment = "testnet"
 manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
 deps = { Sui = "Sui" }
 
+[pinned.testnet.openzeppelin_access]
+source = { local = "deps/openzeppelin_access" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
+[pinned.testnet.openzeppelin_math]
+source = { local = "deps/openzeppelin_math" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
+[pinned.testnet.openzeppelin_utils]
+source = { local = "deps/openzeppelin_utils" }
+use_environment = "testnet"
+manifest_digest = "ADADF33092C45A1CC90703687D2A24A27BB6CCFB07A8BC1F98838ABB466E8F9A"
+deps = { Sui = "Sui" }
+
 [pinned.testnet.reflux]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "0D058E912A1F909A127AB447E2BA96353C7C6A63FE42D5C65008BBE3B02368B7"
-deps = { afsui = "afsui", dusdc = "dusdc", std = "MoveStdlib", sui = "Sui", usdc = "usdc", usdc_stablecoin = "usdc_stablecoin", usdc_upgrade_service = "usdc_upgrade_service" }
+manifest_digest = "B6EAA4CB9D5E4B53140CCD4C90D5F534B611CE0D81199E1C878E364B24057873"
+deps = { afsui = "afsui", dusdc = "dusdc", openzeppelin_access = "openzeppelin_access", openzeppelin_math = "openzeppelin_math", openzeppelin_utils = "openzeppelin_utils", std = "MoveStdlib", sui = "Sui", usdc = "usdc", usdc_stablecoin = "usdc_stablecoin", usdc_upgrade_service = "usdc_upgrade_service" }
 
 [pinned.testnet.usdc]
 source = { local = "deps/usdc" }

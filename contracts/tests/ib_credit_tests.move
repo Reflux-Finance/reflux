@@ -1,9 +1,11 @@
 #[test_only]
 module reflux::ib_credit_tests;
 
+use reflux::access;
 use reflux::ib_credit;
 use reflux::risk_params;
 use dusdc::dusdc::DUSDC;
+use sui::clock;
 use sui::coin;
 use sui::tx_context;
 
@@ -35,13 +37,14 @@ fun test_instant_exit_within_buffer() {
     let mut ctx   = tx_context::dummy();
     let mut state  = ib_credit::create_for_testing(&mut ctx);
     let rp        = risk_params::create_for_testing(&mut ctx);
+    let clock     = clock::create_for_testing(&mut ctx);
 
     // Park 10 dUSDC
     ib_credit::park_idle(&mut state, coin::mint_for_testing<DUSDC>(10_000_000, &mut ctx));
 
     // Exit 5 dUSDC — within parked buffer
     let vault_nav = 100_000_000u64;
-    let out = ib_credit::fund_instant_exit(&mut state, 5_000_000, vault_nav, &rp, &mut ctx);
+    let out = ib_credit::fund_instant_exit(&mut state, 5_000_000, vault_nav, &rp, &clock, &mut ctx);
     assert!(out.value() == 5_000_000, 0);
     assert!(ib_credit::parked_amount(&state) == 5_000_000, 1);
 
@@ -50,6 +53,7 @@ fun test_instant_exit_within_buffer() {
     sui::test_utils::destroy(remainder);
     ib_credit::destroy_for_testing(state);
     risk_params::destroy_for_testing(rp);
+    clock::destroy_for_testing(clock);
 }
 
 // ─── test_instant_exit_above_parked_aborts (ReserveSleeveSource) ─────────────
@@ -59,12 +63,13 @@ fun test_instant_exit_above_buffer_aborts() {
     let mut ctx   = tx_context::dummy();
     let mut state  = ib_credit::create_for_testing(&mut ctx);
     let rp        = risk_params::create_for_testing(&mut ctx);
+    let clock     = clock::create_for_testing(&mut ctx);
 
     // Park only 1 dUSDC, then request 2 dUSDC exit
     ib_credit::park_idle(&mut state, coin::mint_for_testing<DUSDC>(1_000_000, &mut ctx));
     let vault_nav = 100_000_000u64;
     // Parked (1) < requested (2), venue = RESERVE → abort EInsufficientBuffer
-    let _coin = ib_credit::fund_instant_exit(&mut state, 2_000_000, vault_nav, &rp, &mut ctx);
+    let _coin = ib_credit::fund_instant_exit(&mut state, 2_000_000, vault_nav, &rp, &clock, &mut ctx);
 
     abort 0 // unreachable — fund_instant_exit aborts first; _coin covered by abort
 }
@@ -86,6 +91,7 @@ fun test_buffer_draw_hard_cap() {
     let mut ctx   = tx_context::dummy();
     let mut state  = ib_credit::create_for_testing(&mut ctx);
     let rp        = risk_params::create_for_testing(&mut ctx);
+    let clock     = clock::create_for_testing(&mut ctx);
 
     // vault_nav = 100, max_buffer_draw_bps = 1_000 → max_draw = 10 (tiny)
     // requested = 11 > max_draw(10) AND parked = 0
@@ -94,7 +100,7 @@ fun test_buffer_draw_hard_cap() {
     // But wait — the code checks parked >= amount first, then the cap.
     // Since parked(0) < amount(11) we enter the slow path → cap check fires.
     let vault_nav = 100u64;
-    let _coin = ib_credit::fund_instant_exit(&mut state, 11, vault_nav, &rp, &mut ctx);
+    let _coin = ib_credit::fund_instant_exit(&mut state, 11, vault_nav, &rp, &clock, &mut ctx);
     abort 0 // unreachable — fund_instant_exit aborts first; _coin covered by abort
 }
 
@@ -119,4 +125,78 @@ fun test_buffer_repaid_before_redeploy() {
     let remainder = ib_credit::unpark(&mut state, 1_000_000, &mut ctx);
     sui::test_utils::destroy(remainder);
     ib_credit::destroy_for_testing(state);
+}
+
+// ─── test_exit_limiter_unconfigured_is_unthrottled ───────────────────────────
+// Before the admin calls configure_exit_limiter, instant exits are unthrottled
+// (exit_limiter defaults to `none`).
+#[test]
+fun test_exit_limiter_unconfigured_is_unthrottled() {
+    let mut ctx  = tx_context::dummy();
+    let state    = ib_credit::create_for_testing(&mut ctx);
+    let clock    = clock::create_for_testing(&mut ctx);
+
+    assert!(ib_credit::exit_limiter_available(&state, &clock) == std::u64::max_value!(), 0);
+
+    ib_credit::destroy_for_testing(state);
+    clock::destroy_for_testing(clock);
+}
+
+// ─── test_exit_limiter_throttles_instant_exits ───────────────────────────────
+// Once configured, the bucket throttles cumulative instant-exit volume
+// regardless of how much is parked.
+#[test]
+#[expected_failure]
+fun test_exit_limiter_throttles_instant_exits() {
+    let mut ctx   = tx_context::dummy();
+    let mut state = ib_credit::create_for_testing(&mut ctx);
+    let rp        = risk_params::create_for_testing(&mut ctx);
+    let clock     = clock::create_for_testing(&mut ctx);
+    let admin     = access::create_admin_auth_for_testing(&mut ctx);
+
+    // Bucket: capacity 3 dUSDC, refilling 1 dUSDC every hour — starts full.
+    ib_credit::configure_exit_limiter(&admin, &mut state, 3_000_000, 1_000_000, 3_600_000, &clock);
+    ib_credit::park_idle(&mut state, coin::mint_for_testing<DUSDC>(10_000_000, &mut ctx));
+    let vault_nav = 100_000_000u64;
+
+    // First 3M draws the bucket to empty — succeeds.
+    let out = ib_credit::fund_instant_exit(&mut state, 3_000_000, vault_nav, &rp, &clock, &mut ctx);
+    sui::test_utils::destroy(out);
+    assert!(ib_credit::exit_limiter_available(&state, &clock) == 0, 0);
+
+    // A 4th unit in the same window must abort — bucket is empty.
+    let _coin = ib_credit::fund_instant_exit(&mut state, 1, vault_nav, &rp, &clock, &mut ctx);
+    abort 0 // unreachable — fund_instant_exit aborts first
+}
+
+// ─── test_exit_limiter_refills_over_time ─────────────────────────────────────
+#[test]
+fun test_exit_limiter_refills_over_time() {
+    let mut ctx   = tx_context::dummy();
+    let mut state = ib_credit::create_for_testing(&mut ctx);
+    let rp        = risk_params::create_for_testing(&mut ctx);
+    let mut clock = clock::create_for_testing(&mut ctx);
+    let admin     = access::create_admin_auth_for_testing(&mut ctx);
+
+    ib_credit::configure_exit_limiter(&admin, &mut state, 3_000_000, 1_000_000, 3_600_000, &clock);
+    ib_credit::park_idle(&mut state, coin::mint_for_testing<DUSDC>(10_000_000, &mut ctx));
+    let vault_nav = 100_000_000u64;
+
+    let out = ib_credit::fund_instant_exit(&mut state, 3_000_000, vault_nav, &rp, &clock, &mut ctx);
+    sui::test_utils::destroy(out);
+    assert!(ib_credit::exit_limiter_available(&state, &clock) == 0, 0);
+
+    // Advance one full refill interval — 1M of headroom returns.
+    clock::increment_for_testing(&mut clock, 3_600_000);
+    assert!(ib_credit::exit_limiter_available(&state, &clock) == 1_000_000, 1);
+
+    let out2 = ib_credit::fund_instant_exit(&mut state, 1_000_000, vault_nav, &rp, &clock, &mut ctx);
+    sui::test_utils::destroy(out2);
+
+    let leftover = ib_credit::parked_amount(&state);
+    let remainder = ib_credit::unpark(&mut state, leftover, &mut ctx);
+    sui::test_utils::destroy(remainder);
+    ib_credit::destroy_for_testing(state);
+    risk_params::destroy_for_testing(rp);
+    clock::destroy_for_testing(clock);
 }

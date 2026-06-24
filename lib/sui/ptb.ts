@@ -213,12 +213,13 @@ export interface WithdrawParams {
  * Build a PTB that calls deposit_router::withdraw (full withdrawal — closes the position).
  *
  * Move signature:
- *   withdraw(pos, shares, min_out, next_roll_id, pool, ib, registry, rp, ctx) → Coin<DUSDC>
+ *   withdraw(pos, shares, min_out, next_roll_id, pool, ib, registry, rp, clock, ctx) → Coin<DUSDC>
  *
  * Splits `sharesAmount` from the rfUSD coin so it works when the user holds
  * more rfUSD than a single position minted. The returned Coin<DUSDC> is
  * optionally swapped to USDC (when payoutAsset is 'usdc') before being
- * transferred to the sender.
+ * transferred to the sender. `clock` (0x6) drives ib_credit's instant-exit
+ * rate limiter (see reflux::ib_credit::configure_exit_limiter).
  */
 export function buildWithdrawTx(params: WithdrawParams): Transaction {
   const { contracts, positionId, sharesCoinId, sharesAmount, minDusdcOut, nextRollId, payoutAsset, minUsdcOut, sender } = params;
@@ -241,6 +242,7 @@ export function buildWithdrawTx(params: WithdrawParams): Transaction {
       tx.object(contracts.ibCreditStateId),  // ib: &mut IBCreditState
       tx.object(contracts.shareRegistryId),  // registry: &mut ShareRegistry
       tx.object(contracts.riskParamsId),     // rp: &RiskParams
+      tx.object('0x6'),                      // clock: &Clock
     ],
     typeArguments: [],
   })[0]!;
@@ -302,6 +304,7 @@ export function buildWithdrawPartialTx(params: WithdrawPartialParams): Transacti
       tx.object(contracts.ibCreditStateId),  // ib: &mut IBCreditState
       tx.object(contracts.shareRegistryId),  // registry: &mut ShareRegistry
       tx.object(contracts.riskParamsId),     // rp: &RiskParams
+      tx.object('0x6'),                      // clock: &Clock
     ],
     typeArguments: [],
   })[0]!;
@@ -781,10 +784,26 @@ export function buildRfBtcFaucetTx(params: RfBtcFaucetParams): Transaction {
 // USDC/dUSDC: 1:1 treasury (same decimal scale — fee = 0).
 // SUI/dUSDC:  CPAMM; initial ratio sets the SUI/USD price.
 // rfBTC/dUSDC: CPAMM; initial ratio sets the BTC/USD price.
+//
+// Admin gating is `openzeppelin_access::access_control::Auth<AdminRole>` (see
+// reflux::access), not a persistent capability object — `Auth` has no
+// `store`/`key`, so it must be minted fresh in the same PTB via
+// `access::new_admin_auth` and is consumed immediately by the gated call.
+
+/** Mints `Auth<AdminRole>` from the shared access-control registry, for use
+ *  later in the same PTB by an admin-gated moveCall. */
+function mintAdminAuth(tx: Transaction, packageId: string, accessControlId: string) {
+  return tx.moveCall({
+    package: packageId,
+    module: 'access',
+    function: 'new_admin_auth',
+    arguments: [tx.object(accessControlId)],
+  })[0]!;
+}
 
 export interface AddLiquidityUsdcDusdcParams {
   packageId: string;
-  adminCapId: string;
+  accessControlId: string;
   spotRouterConfigId: string;
   usdcCoinId: string;
   dusdcCoinId: string;
@@ -792,15 +811,16 @@ export interface AddLiquidityUsdcDusdcParams {
 }
 
 export function buildAddLiquidityUsdcDusdcTx(params: AddLiquidityUsdcDusdcParams): Transaction {
-  const { packageId, adminCapId, spotRouterConfigId, usdcCoinId, dusdcCoinId, sender } = params;
+  const { packageId, accessControlId, spotRouterConfigId, usdcCoinId, dusdcCoinId, sender } = params;
   const tx = new Transaction();
   tx.setSender(sender);
+  const adminAuth = mintAdminAuth(tx, packageId, accessControlId);
   tx.moveCall({
     package: packageId,
     module: 'spot_router',
     function: 'add_liquidity_usdc_dusdc',
     arguments: [
-      tx.object(adminCapId),
+      adminAuth,
       tx.object(spotRouterConfigId),
       tx.object(usdcCoinId),
       tx.object(dusdcCoinId),
@@ -811,7 +831,7 @@ export function buildAddLiquidityUsdcDusdcTx(params: AddLiquidityUsdcDusdcParams
 
 export interface AddLiquiditySuiDusdcParams {
   packageId: string;
-  adminCapId: string;
+  accessControlId: string;
   spotRouterConfigId: string;
   suiCoinId: string;
   dusdcCoinId: string;
@@ -819,15 +839,16 @@ export interface AddLiquiditySuiDusdcParams {
 }
 
 export function buildAddLiquiditySuiDusdcTx(params: AddLiquiditySuiDusdcParams): Transaction {
-  const { packageId, adminCapId, spotRouterConfigId, suiCoinId, dusdcCoinId, sender } = params;
+  const { packageId, accessControlId, spotRouterConfigId, suiCoinId, dusdcCoinId, sender } = params;
   const tx = new Transaction();
   tx.setSender(sender);
+  const adminAuth = mintAdminAuth(tx, packageId, accessControlId);
   tx.moveCall({
     package: packageId,
     module: 'spot_router',
     function: 'add_liquidity_sui_dusdc',
     arguments: [
-      tx.object(adminCapId),
+      adminAuth,
       tx.object(spotRouterConfigId),
       tx.object(suiCoinId),
       tx.object(dusdcCoinId),
@@ -838,7 +859,7 @@ export function buildAddLiquiditySuiDusdcTx(params: AddLiquiditySuiDusdcParams):
 
 export interface AddLiquidityRfBtcDusdcParams {
   packageId: string;
-  adminCapId: string;
+  accessControlId: string;
   spotRouterConfigId: string;
   rfbtcCoinId: string;
   dusdcCoinId: string;
@@ -846,15 +867,16 @@ export interface AddLiquidityRfBtcDusdcParams {
 }
 
 export function buildAddLiquidityRfBtcDusdcTx(params: AddLiquidityRfBtcDusdcParams): Transaction {
-  const { packageId, adminCapId, spotRouterConfigId, rfbtcCoinId, dusdcCoinId, sender } = params;
+  const { packageId, accessControlId, spotRouterConfigId, rfbtcCoinId, dusdcCoinId, sender } = params;
   const tx = new Transaction();
   tx.setSender(sender);
+  const adminAuth = mintAdminAuth(tx, packageId, accessControlId);
   tx.moveCall({
     package: packageId,
     module: 'spot_router',
     function: 'add_liquidity_rfbtc_dusdc',
     arguments: [
-      tx.object(adminCapId),
+      adminAuth,
       tx.object(spotRouterConfigId),
       tx.object(rfbtcCoinId),
       tx.object(dusdcCoinId),
@@ -944,11 +966,15 @@ export function buildSwapTx(params: SwapParams): Transaction {
 }
 
 // ─── Keeper: roll positions ────────────────────────────────────────────────────
+//
+// Keeper gating is `Auth<KeeperRole>` (see reflux::access), minted fresh in
+// this PTB from the shared access-control registry rather than referencing a
+// persistent `KeeperAuth` object — see the module doc on reflux::access for why.
 
 export interface RollPositionsParams {
   contracts: RefluxContracts & {
     vaultStateId: string;
-    keeperAuthId: string;
+    accessControlId: string;
     allocationPolicyId: string;
     clockId: string;
   };
@@ -961,12 +987,19 @@ export function buildRollPositionsTx(params: RollPositionsParams): Transaction {
   const tx = new Transaction();
   tx.setSender(params.sender);
 
+  const keeperAuth = tx.moveCall({
+    package: contracts.packageId,
+    module: 'access',
+    function: 'new_keeper_auth',
+    arguments: [tx.object(contracts.accessControlId)],
+  })[0]!;
+
   tx.moveCall({
     package: contracts.packageId,
     module: 'vault',
     function: 'roll_positions',
     arguments: [
-      tx.object(contracts.keeperAuthId),
+      keeperAuth,
       tx.object(contracts.vaultStateId),
       tx.object(contracts.depositRouterId),
       tx.object(contracts.shareRegistryId),
@@ -988,7 +1021,7 @@ export interface RollDemoParams {
   contracts: RefluxContracts & {
     vaultStateId: string;
     allocationPolicyId: string;
-    adminCapId: string;
+    accessControlId: string;
     clockId: string;
   };
   atmIvE4: bigint;
@@ -1003,12 +1036,14 @@ export function buildRollDemoTx(params: RollDemoParams): Transaction {
   const tx = new Transaction();
   tx.setSender(params.sender);
 
+  const adminAuth = mintAdminAuth(tx, contracts.packageId, contracts.accessControlId);
+
   tx.moveCall({
     package: contracts.packageId,
     module: 'vault',
     function: 'roll_demo',
     arguments: [
-      tx.object(contracts.adminCapId),
+      adminAuth,
       tx.object(contracts.vaultStateId),
       tx.object(contracts.depositRouterId),
       tx.object(contracts.shareRegistryId),

@@ -18,6 +18,17 @@ usdc_stablecoin      = { local = "deps/usdc_stablecoin" }       # 0x346e3233 —
 # afSUI: Aftermath Finance testnet LSD — skeleton with correct published-at
 afsui = { local = "deps/afsui" }
 
+# OpenZeppelin Contracts for Sui — access control, rate limiting, checked math.
+# Vendored as local source (see contracts/deps/openzeppelin_*/Move.toml for the
+# pinned upstream commit) because the build environment has no MVR/network
+# access. Once available, swap each line below for:
+#   openzeppelin_access = { r.mvr = "@openzeppelin-move/access" }
+#   openzeppelin_utils  = { r.mvr = "@openzeppelin-move/utils" }
+#   openzeppelin_math   = { r.mvr = "@openzeppelin-move/integer-math" }
+openzeppelin_access = { local = "deps/openzeppelin_access" }
+openzeppelin_utils  = { local = "deps/openzeppelin_utils" }
+openzeppelin_math   = { local = "deps/openzeppelin_math" }
+
 # --- External protocol dependencies (future phases) -----------------------
 # DeepBook Predict — branch predict-testnet-4-16 (NOT main):
 # predict = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/predict", rev = "predict-testnet-4-16" }

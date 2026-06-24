@@ -198,7 +198,15 @@ export const REFLUX_OBJECTS = {
   coinMetadataRfusd:   '0x209774a71f7027bd6eeaf524a701ca057a84abf5db938b95b15377fb1eb5a7de',
   coinMetadataRfbtc:   '0xad9fa32d50932d4b2ce504b3c599c9861b06c4fcfb8ca066631f10d8cc271b04',
   upgradeCap:          '0xefe08867b3959a13152cb85445d9d410ea01bc2072a76781081f181a23e52738',
-  adminCap:            '0x1ea21115028f6375675f60644690493c11e004fe1e001cebd823947c84769aa6',
+  // Replaces the old `adminCap` (a freely-transferable AdminCap object) now
+  // that admin/keeper auth is OpenZeppelin `access_control` — see
+  // reflux::access and the "OpenZeppelin Move Libraries" section of the
+  // README. This is the shared `AccessControl<ACCESS>` registry; admin/keeper
+  // PTBs mint a short-lived `Auth<AdminRole>` / `Auth<KeeperRole>` from it via
+  // an extra moveCall in the same transaction rather than referencing a
+  // persistent capability object ID.
+  // TODO: update after redeploying the new package — not yet published.
+  accessControl:       '0x0',
 } as const;
 
 // ---------------------------------------------------------------------------

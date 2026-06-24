@@ -104,12 +104,12 @@ describe('buildEmergencyDeleverageTx', () => {
 });
 
 describe('buildRollPositionsTx', () => {
-  it('calls vault::roll_positions', () => {
+  it('mints Auth<KeeperRole> then calls vault::roll_positions', () => {
     const tx = buildRollPositionsTx({
       contracts: {
         ...CONTRACTS,
         vaultStateId: MOCK_ID,
-        keeperAuthId: MOCK_ID,
+        accessControlId: MOCK_ID,
         allocationPolicyId: MOCK_ID,
         clockId: '0x6',
       },
@@ -118,9 +118,11 @@ describe('buildRollPositionsTx', () => {
     });
     expect(tx).toBeInstanceOf(Transaction);
     const data = tx.getData();
-    const cmd = data.commands[0] as { MoveCall?: { module: string; function: string } };
-    expect(cmd.MoveCall?.module).toBe('vault');
-    expect(cmd.MoveCall?.function).toBe('roll_positions');
+    const calls = data.commands.map((c) => (c as { MoveCall?: { module: string; function: string } }).MoveCall);
+    expect(calls[0]?.module).toBe('access');
+    expect(calls[0]?.function).toBe('new_keeper_auth');
+    expect(calls[1]?.module).toBe('vault');
+    expect(calls[1]?.function).toBe('roll_positions');
   });
 });
 

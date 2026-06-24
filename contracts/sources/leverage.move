@@ -11,6 +11,8 @@
 module reflux::leverage;
 
 use reflux::risk_params::RiskParams;
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
 use dusdc::dusdc::DUSDC;
 use sui::coin::{Self, Coin};
 use sui::event;
@@ -25,6 +27,7 @@ const BPS_DENOM:     u64 = 10_000;
 const EInsufficientCollateral: u64 = 0;
 const EBorrowExceedsMaxLtv:    u64 = 1;
 const ELtvHealthy:             u64 = 2; // deleverage called on healthy position
+const EMathOverflow:           u64 = 3;
 const EExternalPending:        u64 = 99;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
@@ -67,8 +70,8 @@ public struct DeleverageExecuted has copy, drop {
 // ─── Core math (pure, no external calls) ─────────────────────────────────────
 
 /// LTV in basis points: (debt * 10_000) / collateral_value.
-/// Uses u128 intermediates to avoid overflow.
-/// Asserts non-zero collateral; returns 10_000+ if fully underwater.
+/// Uses the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) to
+/// avoid overflow. Asserts non-zero collateral; returns 10_000+ if fully underwater.
 public fun compute_ltv_bps(
     collateral_amount: u64,
     debt_dusdc:        u64,
@@ -76,10 +79,10 @@ public fun compute_ltv_bps(
 ): u64 {
     assert!(collateral_amount > 0, EInsufficientCollateral);
     // collateral_value_dusdc = collateral_amount * price_e9 / 1e9
-    let coll_val = ((collateral_amount as u128) * (price_e9 as u128)) / (PRICE_SCALE as u128);
+    let coll_val = mul_div(collateral_amount, price_e9, PRICE_SCALE);
     assert!(coll_val > 0, EInsufficientCollateral);
     // ltv_bps = debt * 10_000 / coll_val
-    (((debt_dusdc as u128) * (BPS_DENOM as u128)) / coll_val) as u64
+    mul_div(debt_dusdc, BPS_DENOM, coll_val)
 }
 
 /// Amount of dUSDC that must be repaid to bring LTV back to `target_ltv_bps`.
@@ -90,9 +93,9 @@ public fun deleverage_amount(
     price_e9:          u64,
     target_ltv_bps:    u64,
 ): u64 {
-    let coll_val = (((collateral_amount as u128) * (price_e9 as u128)) / (PRICE_SCALE as u128)) as u64;
+    let coll_val = mul_div(collateral_amount, price_e9, PRICE_SCALE);
     // target_debt = coll_val * target_ltv / 10_000
-    let target_debt = (((coll_val as u128) * (target_ltv_bps as u128)) / (BPS_DENOM as u128)) as u64;
+    let target_debt = mul_div(coll_val, target_ltv_bps, BPS_DENOM);
     if (debt_dusdc <= target_debt) { 0 } else { debt_dusdc - target_debt }
 }
 
@@ -206,6 +209,17 @@ public fun execute_partial_deleverage(
         ltv_before,
         ltv_after,
     });
+}
+
+// ─── Internal math ────────────────────────────────────────────────────────────
+
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
+fun mul_div(a: u64, b: u64, c: u64): u64 {
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 // Read accessors

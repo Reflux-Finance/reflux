@@ -8,6 +8,8 @@
 /// at proposal time, not execution time.
 module reflux::risk_params;
 
+use reflux::access::AdminRole;
+use openzeppelin_access::access_control::Auth;
 use sui::clock::Clock;
 use sui::event;
 
@@ -38,9 +40,6 @@ const EExceedsHardCap:     u64 = 3;
 const EInvalidParams:      u64 = 4;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
-
-/// Admin capability — single instance, transferred to deployer at init.
-public struct AdminCap has key, store { id: UID }
 
 /// Staged soft-parameter update waiting out the 24 h timelock.
 public struct ParamUpdate has store, drop {
@@ -92,7 +91,6 @@ public struct VaultUnpaused has copy, drop {}
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 fun init(ctx: &mut TxContext) {
-    transfer::transfer(AdminCap { id: object::new(ctx) }, ctx.sender());
     transfer::share_object(RiskParams {
         id: object::new(ctx),
         absolute_max_ltv_bps:  ABSOLUTE_MAX_LTV_BPS,
@@ -112,7 +110,7 @@ fun init(ctx: &mut TxContext) {
 // ─── Admin: timelock propose / execute / cancel ───────────────────────────────
 
 public fun propose_update(
-    _: &AdminCap,
+    _: &Auth<AdminRole>,
     params: &mut RiskParams,
     liquidation_ltv_bps:   u64,
     target_ltv_bps:        u64,
@@ -162,7 +160,7 @@ public fun execute_update(params: &mut RiskParams, clock: &Clock) {
     event::emit(ParamUpdateExecuted { executed_at_ms: now });
 }
 
-public fun cancel_update(_: &AdminCap, params: &mut RiskParams) {
+public fun cancel_update(_: &Auth<AdminRole>, params: &mut RiskParams) {
     assert!(params.pending.is_some(), ENoPendingUpdate);
     let _ = params.pending.extract();
     event::emit(ParamUpdateCancelled {});
@@ -170,12 +168,12 @@ public fun cancel_update(_: &AdminCap, params: &mut RiskParams) {
 
 // ─── Admin: pause / unpause ───────────────────────────────────────────────────
 
-public fun pause(_: &AdminCap, params: &mut RiskParams) {
+public fun pause(_: &Auth<AdminRole>, params: &mut RiskParams) {
     params.paused = true;
     event::emit(VaultPaused {});
 }
 
-public fun unpause(_: &AdminCap, params: &mut RiskParams) {
+public fun unpause(_: &Auth<AdminRole>, params: &mut RiskParams) {
     params.paused = false;
     event::emit(VaultUnpaused {});
 }
@@ -258,13 +256,3 @@ public fun destroy_for_testing(p: RiskParams) {
     id.delete();
 }
 
-#[test_only]
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    AdminCap { id: object::new(ctx) }
-}
-
-#[test_only]
-public fun destroy_admin_cap_for_testing(cap: AdminCap) {
-    let AdminCap { id } = cap;
-    id.delete();
-}

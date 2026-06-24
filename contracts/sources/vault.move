@@ -16,13 +16,14 @@
 /// is exercisable in unit tests.
 module reflux::vault;
 
+use reflux::access::{AdminRole, KeeperRole};
 use reflux::allocator::{Self, AllocationPolicy, AllocationTargets};
 use reflux::deposit_router::{Self, DepositPool};
 use reflux::ib_credit::{Self, IBCreditState};
-use reflux::keeper_auth::{Self, KeeperAuth};
 use reflux::predict_strategy;
-use reflux::risk_params::{AdminCap, RiskParams};
+use reflux::risk_params::RiskParams;
 use reflux::share_token::{Self, ShareRegistry};
+use openzeppelin_access::access_control::Auth;
 use dusdc::dusdc::DUSDC;
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
@@ -69,7 +70,7 @@ fun init(ctx: &mut TxContext) {
 /// Steps 2, 5, 7 call Predict / Margin functions that abort (EXTERNAL-PENDING).
 /// Full production roll is wired once external deps are confirmed.
 public fun roll_positions(
-    auth:     &KeeperAuth,
+    _auth:    &Auth<KeeperRole>,
     state:    &mut VaultState,
     pool:     &mut DepositPool,
     registry: &mut ShareRegistry,
@@ -79,7 +80,9 @@ public fun roll_positions(
     clock:    &Clock,
     ctx:      &mut TxContext,
 ) {
-    keeper_auth::assert_authorized(auth);
+    // Step 1: keeper auth — `&Auth<KeeperRole>` is itself the proof; minting
+    // one (via access::new_keeper_auth) already asserted the sender holds
+    // KeeperRole, so no body check is needed here.
 
     // Step 2: Redeem all settled Predict positions — EXTERNAL-PENDING
     // predict_strategy::redeem_all_settled aborts; full wiring in Phase 9.
@@ -95,7 +98,7 @@ public fun roll_positions(
 /// demos while `predict_strategy::redeem_all_settled` is EXTERNAL-PENDING.
 /// On mainnet the keeper's `roll_positions` supersedes this.
 public fun roll_demo(
-    _admin:    &AdminCap,
+    _admin:    &Auth<AdminRole>,
     state:     &mut VaultState,
     pool:      &mut DepositPool,
     registry:  &mut ShareRegistry,
@@ -145,7 +148,7 @@ public fun roll_demo(
 /// `atm_iv_e4` is passed to the allocator for regime determination.
 #[test_only]
 public fun roll_positions_mock(
-    auth:        &KeeperAuth,
+    _auth:       &Auth<KeeperRole>,
     state:       &mut VaultState,
     pool:        &mut DepositPool,
     registry:    &mut ShareRegistry,
@@ -157,8 +160,7 @@ public fun roll_positions_mock(
     clock:       &Clock,
     ctx:         &mut TxContext,
 ): AllocationTargets {
-    // Step 1
-    keeper_auth::assert_authorized(auth);
+    // Step 1: keeper auth — see roll_positions for why no body check is needed.
 
     // Step 2 (mock): mint simulated settlement proceeds
     let settled = coin::mint_for_testing<DUSDC>(yield_dusdc, ctx);

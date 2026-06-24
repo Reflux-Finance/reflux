@@ -155,7 +155,7 @@ Sign in (zkLogin or wallet) → Deposit any accepted asset → rfUSD shares mint
 reflux/
 ├── contracts/          # Sui Move package `reflux` (2024 edition), 15 modules
 │   ├── sources/         # 13-module build order + rfbtc.move + types.move
-│   └── tests/           # one test file per module, 83 tests total
+│   └── tests/           # one test file per module, 86 tests total
 ├── lib/                 # shared TypeScript SDK (@reflux/lib), 77 tests
 │   ├── sui/             # SuiClient, PTB builders (lib/sui/ptb.ts), on-chain reads
 │   ├── deepbook/        # Predict indexer client + SVI parsing, margin position reads
@@ -169,11 +169,11 @@ reflux/
 └── sim/                  # Simulation harness → SIMULATION.md, 19 tests
 ```
 
-### Move contracts — 83 tests passing, zero failures
+### Move contracts — 86 tests passing, zero failures
 
 ```
 Phase A (modules 1-8):
-  risk_params → keeper_auth → share_token (rfUSD) → lsd_adapter
+  access (RBAC) → risk_params → share_token (rfUSD) → lsd_adapter
   → staking_adapter → spot_router → ib_credit → leverage
 
 Phase B (modules 9-13):
@@ -186,18 +186,193 @@ Added beyond the original 13-module plan:
 
 Key properties enforced in Move:
 - **No floating point** — all amounts `u64` in base units; weights in bps;
-  prices scaled 1e9; IV scaled 1e4. Overflow handled via u128 intermediates.
-- **Capability pattern** — `AdminCap` and `KeeperCap` for privileged calls;
-  `risk_params` changes are timelocked (24h) even for the admin.
+  prices scaled 1e9; IV scaled 1e4. Overflow handled via
+  `openzeppelin_math::u64::mul_div` (see "OpenZeppelin Move Libraries" below).
+- **Role-based access control** — `Auth<AdminRole>` / `Auth<KeeperRole>`
+  (OpenZeppelin `access_control`, minted from `reflux::access`'s shared
+  registry) for privileged calls; `risk_params` changes are timelocked (24h)
+  even for the admin.
 - **Hard caps** — `risk_params` caps cannot be exceeded even by admin;
   `emergency_deleverage` is callable by *anyone* when LTV is breached, and
   aborts when the position is healthy (trustless, not just permissioned).
 - **Events for every state transition** — `AllocationDecision`, `DepositEvent`,
   `WithdrawEvent`, `RollEvent`, `RangeStripOpened`, `PlpSupplied`.
 
+### Module-by-module breakdown
+
+Edition `2024`, package `reflux`, published at
+`0xee23c4aecc3ab750c2c62ca5861b4fc517f577b0f219d80fa25a42d838a09bea` (v1
+address — coin/event types stay scoped here forever per Sui's upgrade
+rules), upgraded 5× to
+`0x1a2b48289a2f018c2cdb18f330e36a3c1c150abbfca3cae5864931a3bac26967`.
+
+| # | Module | Key objects | Responsibility |
+|---|---|---|---|
+| 1 | [`access.move`](contracts/sources/access.move) | `AccessControl<ACCESS>` (shared, OpenZeppelin `access_control`) | The one RBAC registry for the package. `AdminRole`/`KeeperRole` are minted as `Auth<Role>` witnesses (no `store`/`key` — must be minted fresh in the same PTB) and replace the old `AdminCap`/`KeeperAuth` capability objects. See "OpenZeppelin Move Libraries" below. |
+| 2 | [`risk_params.move`](contracts/sources/risk_params.move) | `RiskParams` (shared) | Single source of truth for every risk limit. Hard cap `absolute_max_ltv_bps = 8000` has no setter, ever. Soft params (`target_ltv_bps`, `max_single_expiry_bps`, `min_ib_buffer_bps`, `max_buffer_draw_bps`, oracle staleness windows) go through `propose_update` → 24h timelock → `execute_update` (callable by anyone once the clock allows it), gated by `Auth<AdminRole>`. `pause`/`unpause` gate the allocator only — never withdrawals. |
+| 3 | [`share_token.move`](contracts/sources/share_token.move) | `ShareRegistry` (shared, wraps `TreasuryCap<RFUSD>`) | rfUSD mint/burn, both `public(package)` so only `vault.move` can call them. Invariant: `total_supply * nav_per_share_e9 == NAV ± rounding`, and rounding always favors the system (mint/burn both round down). `update_nav` recomputes price at the end of every roll. |
+| 4 | [`lsd_adapter.move`](contracts/sources/lsd_adapter.move) | `LsdRateRegistry` (shared) | Exchange-rate oracle for vSUI/afSUI/haSUI (`rate_e9`, staleness-checked against `RiskParams.max_pyth_staleness_ms`). Rates are admin-pushed today; `EXTERNAL-PENDING` swap for live LSP pool reads once object IDs are confirmed. |
+| 5 | [`staking_adapter.move`](contracts/sources/staking_adapter.move) | `WithdrawalReceipt` (owned) | SUI → LSD staking and queued-unstake receipts honoring each LSP's unbonding delay (`redeemable_after_epoch`). All three pool calls (Volo/Aftermath/Haedal) are `EXTERNAL-PENDING`; the public interface is stable so wiring real pools is a drop-in. |
+| 6 | [`spot_router.move`](contracts/sources/spot_router.move) | `SpotRouterConfig` (shared) | Three internal pools in one object: USDC↔dUSDC (1:1 admin-seeded treasury, 0 fee), SUI↔dUSDC and rfBTC↔dUSDC (x·y=k CPAMM, 0.3% fee, u128 intermediates in `cpamm_out` to prevent overflow). This is DR-1's resolution — Reflux owns its own conversion liquidity since no canonical pool exists on `predict-testnet-4-16`. |
+| 7 | [`ib_credit.move`](contracts/sources/ib_credit.move) | `IBCreditState` (shared) | The "Iron Bank" liquidity abstraction — exactly two guarantees: `park_idle`/`unpark` so idle dUSDC always earns, and `fund_instant_exit` for withdrawals under `max_buffer_draw_bps`, settled via `repay_buffer_draw` on the next roll. An embedded OpenZeppelin `RateLimiter` (`exit_limiter`, admin-configurable) additionally throttles cumulative instant-exit volume against burst draining. Coded behind a `LiquiditySource` interface; `venue_tag` 0 = `ReserveSleeveSource` (live default per DR-2), 1 = `IronBankSource` (`EXTERNAL-PENDING`, no public package found on the target branch). |
+| 8 | [`leverage.move`](contracts/sources/leverage.move) | `CollateralPosition` (owned) | Pure, independently tested LTV math (`compute_ltv_bps`, `deleverage_amount`, `needs_deleverage`) plus position lifecycle (`borrow_against_collateral`, `repay_and_release`, `execute_partial_deleverage`). The actual DeepBook Margin calls are `EXTERNAL-PENDING`; the position record never custodies the LSD coins, only metadata for LTV recomputation. |
+| 9 | [`allocator.move`](contracts/sources/allocator.move) | `AllocationPolicy` (shared) | The IV-regime engine. `compute_targets` splits NAV across four arms — `plp`, `range`, `margin_loop`, `ib_idle` — shifting weight by `regime_shift_bps` when ATM IV crosses `iv_low_threshold_e4`/`iv_high_threshold_e4`, clamping `ib_idle` to the `min_ib_buffer_bps` floor. Every call emits `AllocationDecision` with a `reason_code` (`RC_NEUTRAL`, `RC_IV_LOW`, `RC_IV_HIGH`, `RC_HARD_CAP`, `RC_IB_FLOOR`) and before/after weights — this is the transparency surface the `DecisionFeed` renders. Base weights are timelocked the same way as `risk_params`. |
+| 10 | [`predict_strategy.move`](contracts/sources/predict_strategy.move) | `PredictPosition` (owned) | Stable wrapper around `predict::mint` (range strips) and `predict::supply` (PLP). Production calls are `EXTERNAL-PENDING` pending confirmed Predict package addresses; `*_mock` variants (`open_range_strip_mock`, `supply_to_plp_mock`, `redeem_settled_mock_with_yield`) mirror the same interface with `coin::mint_for_testing`, so every roll path is unit-testable today. |
+| 11 | [`emergency.move`](contracts/sources/emergency.move) | — | `emergency_deleverage`, callable by *any* address. `assert_ltv_breach` aborts with `ELtvHealthy` if the position isn't actually breached, so the entry point is safe to leave fully public — there's no incentive or ability to grief a healthy position. No keeper key required to protect the protocol. |
+| 12 | [`deposit_router.move`](contracts/sources/deposit_router.move) | `DepositPool` (shared), `VaultPosition` (owned), `PendingWithdrawal` (owned) | User-facing entry points: `deposit_dusdc` (works today, no external deps), `deposit_usdc`/`deposit_sui`/`deposit_rfbtc` (route through `spot_router`, live), `deposit_vsui`/`deposit_afsui` (collateral + optional leverage, `EXTERNAL-PENDING`). `VaultPosition` tracks each depositor's `CollateralRecord`/`DebtRecord` so yield-source isolation holds in NAV math. Withdrawals burn rfUSD, then check the `ib_credit` instant-exit buffer before falling back to a `PendingWithdrawal` receipt. |
+| 13 | [`vault.move`](contracts/sources/vault.move) | `VaultState` (shared) | The roll orchestrator. `roll_positions` (keeper-gated via `Auth<KeeperRole>`) runs, atomically: redeem settled Predict positions → repay IB draw → LTV check/deleverage → `allocator::compute_targets` → redeploy capital → `share_token::update_nav` → emit `RollCompleted`. `roll_demo` (admin-gated via `Auth<AdminRole>`) and `roll_positions_mock` (test-only) exercise the same order without the still-pending external calls. |
+| — | [`rfbtc.move`](contracts/sources/rfbtc.move) | `RfBtcTreasury` (shared) | Self-issued testnet BTC bridge coin (`RFBTC`), capped faucet (`FAUCET_MAX` = 1,000 rfBTC/call) so no single call drains liquidity. Logged Tier-3-pulled-forward exception — see [rfBTC](#rfbtc--the-testnet-btc-bridge) below. |
+| — | [`types.move`](contracts/sources/types.move) | `VSUI`, `HASUI`, `BTC` witnesses | Stub coin-type witnesses for assets with no live testnet deployment yet (Volo vSUI and Haedal haSUI are mainnet-only; `BTC` stands in for DeepBook's `dbtc` until it's published). |
+
+Every module above follows the same abort-code convention: named `const E*: u64`
+constants (e.g. `ETimelockNotExpired`, `EInsufficientBuffer`, `ELtvHealthy`),
+no bare integer aborts. `EExternalPending: u64 = 99` is the shared sentinel
+used by every still-pending external call site, so `grep -rn EExternalPending
+contracts/sources` is a complete, accurate list of what's wired versus
+staged.
+
+### Dependency pins (`contracts/Move.toml`)
+
+| Package | Source | Address |
+|---|---|---|
+| `dusdc` | local skeleton mirroring `deepbookv3/packages/dusdc` | `0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a` |
+| `usdc` + `usdc_upgrade_service` + `usdc_stablecoin` | local skeleton, Circle canonical testnet USDC | `0xa1ec7fc0…` / `0x252b1dd4…` / `0x346e3233…` |
+| `afsui` | local skeleton, Aftermath Finance testnet LSD | `0x5783fa2298e7301a1c7f99ce45d4a207478fbf3003eca9482ae823d6f6c7cd60` |
+| `dbtc` | commented-out skeleton at `deps/dbtc` | not yet published — see [rfBTC](#rfbtc--the-testnet-btc-bridge) |
+| `predict` / `deepbook` / `deepbook_margin` | git, `MystenLabs/deepbookv3`, branch `predict-testnet-4-16` | staged in `Move.toml` comments, not yet uncommented pending final ABI confirmation |
+| `openzeppelin_access` / `openzeppelin_math` / `openzeppelin_utils` | local source vendor of [OpenZeppelin/contracts-sui](https://github.com/OpenZeppelin/contracts-sui) (MIT) — see "OpenZeppelin Move Libraries" below | not separately published — compiled into the `reflux` package itself |
+
+### OpenZeppelin Move Libraries
+
+Reflux uses three packages from
+[OpenZeppelin/contracts-sui](https://github.com/OpenZeppelin/contracts-sui)
+(MIT license, pinned at commit `0f02f8e52227664e45f3e0be50240b39f29e1d87`):
+**access control**, **checked integer math**, and **rate limiting**. They're
+vendored as local Move source under `contracts/deps/openzeppelin_{access,
+math,utils}/` rather than pulled via the Move Registry (`r.mvr`) — the
+build/judging environment here has no MVR or network access, so a source
+copy is the only way to actually compile and publish them together with
+`reflux`. Each vendored package's `Move.toml` carries a comment with the
+exact `r.mvr` line to swap in once that's available
+(`@openzeppelin-move/access`, `@openzeppelin-move/integer-math`,
+`@openzeppelin-move/utils`).
+
+#### Access control — `reflux::access`
+
+[`access.move`](contracts/sources/access.move) is the package's only RBAC
+registry: one shared `AccessControl<ACCESS>` object (`ACCESS` is the
+module's one-time witness and also the root role), with two roles defined
+in the same module —
+
+```move
+public struct AdminRole {}    // governance: pause, risk params, pool bootstrap
+public struct KeeperRole {}   // the off-chain keeper: vault::roll_positions
+```
+
+This replaces what used to be two bespoke, hand-rolled mechanisms:
+`AdminCap` (a plain owned object — anyone holding it could call any
+admin function, and it could be transferred or lost like any other object)
+and `KeeperAuth` (a shared object with a live `active: bool` flag, checked
+manually at the top of every keeper-gated function).
+
+The OpenZeppelin model is different in a way that matters for security:
+`Auth<Role>` is a typed witness with only the `drop` ability — no `store`,
+no `key`. It can't be saved in global storage or owned across transactions.
+Gated functions take `&Auth<AdminRole>` / `&Auth<KeeperRole>` directly and
+do **no body check** — the type itself is the proof, since the only way to
+construct one is `access::new_admin_auth`/`new_keeper_auth`, which mint it
+fresh against the registry and abort unless the caller currently holds the
+role:
+
+```move
+// In the same PTB:
+let auth = access::new_admin_auth(&registry, ctx);
+risk_params::pause(&auth, &mut risk_params);
+```
+
+Because `Auth<Role>` can't outlive the transaction that minted it, revoking
+a role (`access::revoke_keeper`, gated by the role's admin — the root role
+by default) takes effect on the *next* transaction: the revoked address can
+no longer mint a fresh witness. `contracts/tests/access_tests.move` exercises
+this directly (`test_revoked_keeper_cannot_mint_new_auth`).
+
+`risk_params.move`, `vault.move`, `allocator.move`, and `spot_router.move`
+all take `Auth<AdminRole>` where they used to take `&AdminCap`; `vault.move`
+takes `Auth<KeeperRole>` where `roll_positions` used to take `&KeeperAuth`.
+
+#### Checked math — `openzeppelin_math::u64`
+
+CLAUDE.md's engineering convention has always required checked math with
+u128 intermediates on every `a * b / c` (NAV/share conversion, LTV,
+allocator targets, the Iron Bank buffer cap) — but that pattern was
+hand-written three separate times (`ib_credit.move`, `allocator.move`,
+`deposit_router.move`) plus inlined directly in `leverage.move`,
+`share_token.move`, and `lsd_adapter.move`. Every one of those sites now
+delegates to `openzeppelin_math::u64::mul_div(a, b, c, rounding::down())`,
+which does the same u128-intermediate multiply but returns `Option<u64>`
+instead of letting an oversized result hit a bare VM cast-overflow abort:
+
+```move
+fun mul_div(a: u64, b: u64, c: u64): u64 {
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
+}
+```
+
+`rounding::down()` reproduces the exact truncating behavior the original
+hand-rolled casts had, so this is a pure correctness/auditability upgrade,
+not a behavior change. The one checked-math site left untouched is
+`spot_router::cpamm_out` — its constant-product formula multiplies three
+factors before dividing, not two, so it doesn't map onto a single `mul_div`
+call without either an extra rounding step or re-deriving the formula; it
+keeps its existing, already-overflow-safe u128 arithmetic.
+
+#### Rate limiting — `openzeppelin_utils::rate_limiter`
+
+CLAUDE.md's Iron Bank guarantee is "withdrawals under the buffer cap are
+funded instantly... repaid automatically from the next settlement roll" —
+but the existing `max_buffer_draw_bps` check only capped how much could be
+drawn against NAV, not how *fast* the parked buffer could be drained by a
+burst of withdrawals landing before the keeper's next roll. `ib_credit.move`
+now embeds an `Option<RateLimiter>` (`exit_limiter`) as a `Bucket` —
+OpenZeppelin's continuously-refilling token-bucket variant — and consumes
+from it once per `fund_instant_exit` call, on top of (not instead of) the
+existing per-call bps cap:
+
+```move
+public fun configure_exit_limiter(
+    _admin: &Auth<AdminRole>, state: &mut IBCreditState,
+    capacity: u64, refill_amount: u64, refill_interval_ms: u64, clock: &Clock,
+)
+```
+
+It starts as `none` — `init` can't take a `&Clock` to anchor a bucket, so
+the admin configures it post-deploy via the function above, which can also
+be called again later to reconfigure (OpenZeppelin's rate limiter is
+deliberately immutable-in-place; reconfiguring means building a fresh
+`RateLimiter` and overwriting the field, which `configure_exit_limiter`
+does). Until configured, instant exits are unthrottled by this mechanism —
+`contracts/tests/ib_credit_tests.move` covers both the unconfigured and
+configured/refilling cases.
+
+### Frontend & service stack
+
+| Layer | Stack |
+|---|---|
+| Contracts | Sui Move, edition 2024, `sui move test` |
+| Frontend | Next.js `14.2.35` (App Router), React 18, TypeScript 5, Tailwind CSS 3.4, `@tanstack/react-query` 5 |
+| Wallet / auth | `@mysten/dapp-kit` (browser wallets: Sui Wallet, Slush, Suiet), `@mysten/zklogin` + `@mysten/enoki` (Google OAuth zkLogin) |
+| Chain access | `@mysten/sui` (TS SDK) across `lib`, `app`, `keeper` |
+| Shared SDK (`@reflux/lib`) | Pure PTB builders, Zod-validated indexer/API schemas, bigint-only NAV/risk math, no UI or RPC side effects |
+| Keeper (`@reflux/keeper`) | Node.js 20+, `ioredis` for 7-day-TTL dedup (in-memory fallback for dev/test), `/health`+`/ready` HTTP endpoints |
+| Simulation (`@reflux/sim`) | Node.js, replays the live Predict indexer against `@reflux/lib`'s production allocation math |
+| Validation | Zod on every API route input and every external (indexer/Predict) response |
+| Tooling | pnpm workspaces (`pnpm@9.0.0`), `tsc`, `vitest`, ESLint 8 + `typescript-eslint` 7, Prettier 3 |
+
 ### Build maturity
 
-Reflux has a real testnet deployment, a keeper signing live transactions against DeepBook Predict right now, and 190 passing tests behind it. Here's exactly what's running today versus what's queued next — engineering depth a judge can verify by running the test suite or hitting the live endpoints:
+Reflux has a real testnet deployment, a keeper signing live transactions against DeepBook Predict right now, and 193 passing tests behind it. Here's exactly what's running today versus what's queued next — engineering depth a judge can verify by running the test suite or hitting the live endpoints:
 
 | Status | Components |
 |---|---|
@@ -282,12 +457,12 @@ the live indexer.
 
 | Package | Tests | Status |
 |---|---|---|
-| `contracts` (Move) | 83 | ✅ `sui move test` |
+| `contracts` (Move) | 86 | ✅ `sui move test` |
 | `lib` (`@reflux/lib`) | 77 | ✅ `vitest` |
 | `keeper` (`@reflux/keeper`) | 11 | ✅ `vitest` |
 | `sim` (`@reflux/sim`) | 19 | ✅ `vitest` |
 | `app` | — | ✅ `next build` (8 pages, 10 API routes, 0 errors) |
-| **Total** | **190** | |
+| **Total** | **193** | |
 
 ---
 
@@ -396,8 +571,8 @@ pnpm install
 # Build TypeScript SDK
 pnpm --filter @reflux/lib build
 
-# Run all tests (190 total)
-sui move test --path contracts          # 83 tests
+# Run all tests (193 total)
+sui move test --path contracts          # 86 tests
 pnpm --filter @reflux/lib test           # 77 tests
 pnpm --filter @reflux/keeper test        # 11 tests
 pnpm --filter @reflux/sim test           # 19 tests
@@ -456,9 +631,10 @@ NEXT_PUBLIC_PREDICT_OBJECT_ID=0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13
 NEXT_PUBLIC_DUSDC_TYPE=0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC
 ```
 
-Admin/upgrade capabilities (`adminCap`, `upgradeCap`) and full object detail
-live only in `lib/constants.ts` — they're not needed to interact with the
-deployed system as a user.
+The `upgradeCap` and the shared `accessControl` registry (OpenZeppelin
+`AccessControl<ACCESS>` — see "OpenZeppelin Move Libraries" below) live only
+in `lib/constants.ts` — neither is needed to interact with the deployed
+system as a user.
 
 ---
 

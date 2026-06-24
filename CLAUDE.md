@@ -73,6 +73,8 @@ reflux/
 ├── contracts/             # Sui Move package `reflux`
 │   ├── Move.toml  Published.toml
 │   ├── deps/               # local stubs for external coin packages (afsui, dbtc, dusdc, usdc, …)
+│   │                       # + vendored OpenZeppelin Move libraries (openzeppelin_access/
+│   │                       # _math/_utils — see "OpenZeppelin Move Libraries" below)
 │   ├── sources/            # see build order below
 │   └── tests/
 ├── lib/                   # shared TypeScript SDK (used by app + keeper + sim)
@@ -88,15 +90,27 @@ reflux/
 
 ## Move build order (strict dependency chain)
 
-1. `risk_params.move` 2. `keeper_auth.move` 3. `share_token.move` (rfUSD)
-4. `lsd_adapter.move` 5. `staking_adapter.move` 6. `spot_router.move`
-7. `ib_credit.move` 8. `leverage.move` 9. `allocator.move`
-10. `predict_strategy.move` 11. `emergency.move` 12. `deposit_router.move`
-13. `vault.move`
+1. `access.move` (RBAC registry on top of OpenZeppelin `access_control` — see
+   "OpenZeppelin Move Libraries" below) 2. `risk_params.move`
+3. `share_token.move` (rfUSD) 4. `lsd_adapter.move` 5. `staking_adapter.move`
+6. `spot_router.move` 7. `ib_credit.move` 8. `leverage.move`
+9. `allocator.move` 10. `predict_strategy.move` 11. `emergency.move`
+12. `deposit_router.move` 13. `vault.move`
 
 Plus, outside the strict chain: `rfbtc.move` (testnet BTC bridge coin, see
 the logged Tier exception above) and `types.move` (coin witnesses for
 assets not yet live on testnet: `VSUI`, `HASUI`, `BTC`).
+
+**Logged change:** the bespoke `KeeperAuth` shared object (`keeper_auth.move`,
+now deleted) and `AdminCap` (previously in `risk_params.move`) were replaced
+by `reflux::access` — one `AccessControl<ACCESS>` registry (OpenZeppelin
+`access_control`) minting `Auth<AdminRole>` / `Auth<KeeperRole>` witnesses.
+Gated functions in `risk_params`, `vault`, `allocator`, and `spot_router`
+take `&Auth<AdminRole>` or `&Auth<KeeperRole>` directly with no body check —
+the type itself is the proof. See `contracts/sources/access.move`'s module
+doc and the "OpenZeppelin Move Libraries" section below for the full
+rationale, including why revocation works differently than the old
+`active`-flag model.
 
 ## Engineering conventions
 
@@ -104,9 +118,12 @@ assets not yet live on testnet: `VSUI`, `HASUI`, `BTC`).
   bps (`u64`, 10000 = 100%); prices scaled 1e9 (`_e9` suffix), IV scaled 1e4
   (`_e4`). No magic numbers — constants in `risk_params.move`. Every abort
   uses a named error constant (`const EInsufficientCollateral: u64 = ...`).
-  Checked math everywhere; overflow on multiply-before-divide handled via
-  u128 intermediates. Capability pattern for admin/keeper auth. Events for
-  every state transition. Each module ships with its test file in the same PR.
+  Checked math everywhere; overflow on multiply-before-divide delegates to
+  `openzeppelin_math::u64::mul_div` (see "OpenZeppelin Move Libraries" below)
+  rather than a hand-rolled u128 cast. Admin/keeper auth is OpenZeppelin
+  `access_control` roles (`Auth<AdminRole>` / `Auth<KeeperRole>`), not bare
+  capability objects. Events for every state transition. Each module ships
+  with its test file in the same PR.
 - **TypeScript:** strict mode, no `any`. All chain amounts `bigint`. Zod
   validation on every API route input and every indexer response. PTB
   builders are pure functions in `lib/sui/ptb.ts` — no side effects, fully
@@ -131,6 +148,33 @@ assets not yet live on testnet: `VSUI`, `HASUI`, `BTC`).
 - Pyth for SUI/USD and BTC/USD prices (LTV + FX tracking)
 - LSPs: Volo (vSUI), Aftermath (afSUI), Haedal (haSUI)
 - Sui TS SDK `@mysten/sui`; zkLogin for onboarding
+
+## OpenZeppelin Move Libraries
+
+`contracts/deps/openzeppelin_{access,math,utils}/` vendor three packages from
+[OpenZeppelin/contracts-sui](https://github.com/OpenZeppelin/contracts-sui)
+(MIT, commit `0f02f8e52227664e45f3e0be50240b39f29e1d87`) as local Move
+dependencies — source copies, not `r.mvr` pins, because the build/judging
+environment has no Move Registry or network access. Swap to `r.mvr` once
+available (coordinates noted in each `contracts/deps/openzeppelin_*/Move.toml`).
+Full usage writeup, including the rationale for vendoring, is in the
+root README's "OpenZeppelin Move Libraries" section.
+
+- **Access control** (`openzeppelin_access`) — `reflux::access` is the one
+  `AccessControl<ACCESS>` registry for the whole package; `AdminRole` and
+  `KeeperRole` replace the old `AdminCap` / `KeeperAuth`. See the Logged
+  change note above.
+- **Checked math** (`openzeppelin_math`) — every `a * b / c` checked-math
+  site (NAV/share conversion, LTV, allocator targets, IB buffer cap) calls
+  `openzeppelin_math::u64::mul_div` instead of a hand-rolled u128 cast.
+  `spot_router::cpamm_out`'s three-factor AMM formula is intentionally left
+  on raw u128 — it isn't a single two-factor `mul_div` and rewriting it risked
+  changing swap-pricing precision without independent verification.
+- **Rate limiting** (`openzeppelin_utils`) — `ib_credit::IBCreditState` embeds
+  an optional `RateLimiter` (`Bucket` variant) throttling cumulative
+  instant-exit dUSDC volume, admin-configurable via
+  `configure_exit_limiter`. This is additive to, not a replacement for, the
+  existing `max_buffer_draw_bps` percentage cap — see rule 2 above.
 
 ## OPEN QUESTIONS — resolved (see `docs/INTEGRATION_NOTES.md` for full evidence)
 

@@ -7,6 +7,8 @@
 /// Mint/burn are public(package) so only vault.move may call them.
 module reflux::share_token;
 
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
 use sui::coin::{Self, Coin, TreasuryCap, CoinMetadata};
 use sui::event;
 use sui::url;
@@ -23,6 +25,7 @@ const EZeroShares:        u64 = 1;
 const EZeroNav:           u64 = 2;
 const EMinSharesNotMet:   u64 = 3;
 const EMinAmountNotMet:   u64 = 4;
+const EMathOverflow:      u64 = 5;
 
 // ─── OTW ─────────────────────────────────────────────────────────────────────
 
@@ -97,7 +100,7 @@ public(package) fun mint_shares(
     let nav = registry.nav_per_share_e9;
     assert!(nav > 0, EZeroNav);
     // shares = floor(dusdc_value * PRICE_SCALE / nav)
-    let shares = (((dusdc_value as u128) * (PRICE_SCALE as u128)) / (nav as u128)) as u64;
+    let shares = mul_div(dusdc_value, PRICE_SCALE, nav);
     assert!(shares > 0, EZeroShares);
     assert!(shares >= min_shares, EMinSharesNotMet);
     event::emit(SharesMinted {
@@ -121,7 +124,7 @@ public(package) fun burn_shares(
     assert!(shares_in > 0, EZeroShares);
     let nav = registry.nav_per_share_e9;
     // entitlement = floor(shares * nav / PRICE_SCALE) — rounding down favors vault
-    let entitlement = (((shares_in as u128) * (nav as u128)) / (PRICE_SCALE as u128)) as u64;
+    let entitlement = mul_div(shares_in, nav, PRICE_SCALE);
     assert!(entitlement >= min_amount, EMinAmountNotMet);
     coin::burn(&mut registry.treasury_cap, coin_in);
     event::emit(SharesBurned {
@@ -143,7 +146,7 @@ public(package) fun update_nav(
     let new_nav = if (supply == 0) {
         PRICE_SCALE // reset to 1.0 when no shares exist
     } else {
-        (((total_nav_dusdc as u128) * (PRICE_SCALE as u128)) / (supply as u128)) as u64
+        mul_div(total_nav_dusdc, PRICE_SCALE, supply)
     };
     event::emit(NavUpdated {
         old_nav_e9:     registry.nav_per_share_e9,
@@ -152,6 +155,17 @@ public(package) fun update_nav(
         total_nav_dusdc,
     });
     registry.nav_per_share_e9 = new_nav;
+}
+
+// ─── Internal math ────────────────────────────────────────────────────────────
+
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
+fun mul_div(a: u64, b: u64, c: u64): u64 {
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 // ─── Read accessors ───────────────────────────────────────────────────────────

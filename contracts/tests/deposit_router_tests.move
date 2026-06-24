@@ -1,6 +1,7 @@
 #[test_only]
 module reflux::deposit_router_tests;
 
+use reflux::access;
 use reflux::deposit_router;
 use reflux::ib_credit;
 use reflux::risk_params;
@@ -8,6 +9,7 @@ use reflux::share_token;
 use reflux::spot_router;
 use reflux::types::VSUI;
 use usdc::usdc::USDC;
+use sui::clock;
 use sui::coin;
 use sui::tx_context;
 
@@ -50,6 +52,7 @@ fun test_usdc_roundtrip_plain_usdc() {
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let rp           = risk_params::create_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     let deposit_amount = 10_000_000u64;
     let usdc = coin::mint_for_testing<USDC>(deposit_amount, &mut ctx);
@@ -59,7 +62,7 @@ fun test_usdc_roundtrip_plain_usdc() {
 
     // Withdraw all shares — pool has the dUSDC
     let dusdc_out = deposit_router::withdraw(
-        pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
 
     // Rounding can lose at most 1 unit
@@ -74,6 +77,7 @@ fun test_usdc_roundtrip_plain_usdc() {
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
     spot_router::destroy_for_testing(config);
+    clock::destroy_for_testing(clock_);
 }
 
 // ─── test_deposit_usdc_real_records_output_usdc ──────────────────────────────
@@ -117,6 +121,7 @@ fun test_withdraw_partial_keeps_position_alive() {
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let rp           = risk_params::create_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     let deposit_amount = 10_000_000u64;
     let usdc = coin::mint_for_testing<USDC>(deposit_amount, &mut ctx);
@@ -127,7 +132,7 @@ fun test_withdraw_partial_keeps_position_alive() {
     // Split off 4M of the 10M shares and withdraw just that slice.
     let partial_shares = shares.split(4_000_000, &mut ctx);
     let dusdc_out = deposit_router::withdraw_partial(
-        &mut pos, partial_shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        &mut pos, partial_shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
 
     assert!(dusdc_out.value() >= 3_999_999 && dusdc_out.value() <= 4_000_000, 0);
@@ -138,7 +143,7 @@ fun test_withdraw_partial_keeps_position_alive() {
     // Remaining 6M shares coin is still spendable — withdraw the rest via the
     // full-withdrawal path, which now consumes the position.
     let dusdc_out_2 = deposit_router::withdraw(
-        pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
     assert!(dusdc_out_2.value() >= 5_999_999 && dusdc_out_2.value() <= 6_000_000, 3);
     assert!(share_token::total_supply(&registry) == 0, 4);
@@ -150,6 +155,7 @@ fun test_withdraw_partial_keeps_position_alive() {
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
     spot_router::destroy_for_testing(config);
+    clock::destroy_for_testing(clock_);
 }
 
 // ─── test_withdraw_partial_rejects_full_amount ───────────────────────────────
@@ -164,6 +170,7 @@ fun test_withdraw_partial_rejects_full_amount() {
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let rp           = risk_params::create_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     let usdc = coin::mint_for_testing<USDC>(10_000_000, &mut ctx);
     let (mut pos, shares) = deposit_router::deposit_usdc_mock_returning(
@@ -171,7 +178,7 @@ fun test_withdraw_partial_rejects_full_amount() {
     );
 
     let dusdc_out = deposit_router::withdraw_partial(
-        &mut pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        &mut pos, shares, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
 
     sui::test_utils::destroy(dusdc_out);
@@ -181,6 +188,7 @@ fun test_withdraw_partial_rejects_full_amount() {
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
     spot_router::destroy_for_testing(config);
+    clock::destroy_for_testing(clock_);
 }
 
 // ─── test_withdraw_partial_rejects_leveraged_position ────────────────────────
@@ -192,6 +200,7 @@ fun test_withdraw_partial_rejects_leveraged_position() {
     let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let rp           = risk_params::create_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     let vsui = coin::mint_for_testing<VSUI>(1_000_000_000, &mut ctx);
     let (mut pos, mut shares) = deposit_router::deposit_vsui_mock_returning(
@@ -200,7 +209,7 @@ fun test_withdraw_partial_rejects_leveraged_position() {
 
     let partial = shares.split(100, &mut ctx);
     let dusdc_out = deposit_router::withdraw_partial(
-        &mut pos, partial, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        &mut pos, partial, 1, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
 
     sui::test_utils::destroy(dusdc_out);
@@ -210,6 +219,7 @@ fun test_withdraw_partial_rejects_leveraged_position() {
     deposit_router::destroy_pool_for_testing(pool);
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
+    clock::destroy_for_testing(clock_);
 }
 
 // ─── test_lsd_deposit_with_leverage_respects_max_ltv ─────────────────────────
@@ -264,7 +274,8 @@ fun test_paused_blocks_deposits_not_withdrawals() {
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
     let mut rp       = risk_params::create_for_testing(&mut ctx);
-    let admin        = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin        = access::create_admin_auth_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     // Create a position BEFORE pausing
     let usdc = coin::mint_for_testing<USDC>(5_000_000, &mut ctx);
@@ -278,7 +289,7 @@ fun test_paused_blocks_deposits_not_withdrawals() {
 
     // Withdrawal must still succeed even when paused
     let dusdc_out = deposit_router::withdraw(
-        pos, shares, 0, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        pos, shares, 0, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
     assert!(dusdc_out.value() > 0, 1);
 
@@ -287,8 +298,8 @@ fun test_paused_blocks_deposits_not_withdrawals() {
     deposit_router::destroy_pool_for_testing(pool);
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
-    risk_params::destroy_admin_cap_for_testing(admin);
     spot_router::destroy_for_testing(config);
+    clock::destroy_for_testing(clock_);
 }
 
 // ─── test_paused_blocks_new_deposit ──────────────────────────────────────────
@@ -300,7 +311,7 @@ fun test_paused_blocks_new_deposit() {
     let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
     let mut rp       = risk_params::create_for_testing(&mut ctx);
-    let admin        = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin        = access::create_admin_auth_for_testing(&mut ctx);
 
     risk_params::pause(&admin, &mut rp);
 
@@ -396,6 +407,7 @@ fun test_withdraw_never_leaves_bad_debt() {
     let mut ib       = ib_credit::create_for_testing(&mut ctx);
     let config       = spot_router::create_for_testing(&mut ctx);
     let rp           = risk_params::create_for_testing(&mut ctx);
+    let clock_       = clock::create_for_testing(&mut ctx);
 
     // Alice: USDC deposit
     let usdc = coin::mint_for_testing<USDC>(50_000_000, &mut ctx);
@@ -414,7 +426,7 @@ fun test_withdraw_never_leaves_bad_debt() {
 
     // Alice withdraws her position — should succeed
     let dusdc_out = deposit_router::withdraw(
-        alice_pos, alice_shares, 0, 0, &mut pool, &mut ib, &mut registry, &rp, &mut ctx,
+        alice_pos, alice_shares, 0, 0, &mut pool, &mut ib, &mut registry, &rp, &clock_, &mut ctx,
     );
     assert!(dusdc_out.value() > 0, 1);
     // Alice's 50M rfUSD burned → supply = 75M
@@ -427,4 +439,5 @@ fun test_withdraw_never_leaves_bad_debt() {
     share_token::destroy_for_testing(registry);
     risk_params::destroy_for_testing(rp);
     spot_router::destroy_for_testing(config);
+    clock::destroy_for_testing(clock_);
 }

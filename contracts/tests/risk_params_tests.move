@@ -1,6 +1,7 @@
 #[test_only]
 module reflux::risk_params_tests;
 
+use reflux::access;
 use reflux::risk_params;
 use sui::clock;
 use sui::tx_context;
@@ -21,7 +22,7 @@ fun test_hard_params_are_immutable() {
 #[expected_failure(abort_code = risk_params::ETimelockNotExpired)]
 fun test_timelock_blocks_early_execute() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
     let mut clock = clock::create_for_testing(&mut ctx);
 
@@ -45,7 +46,7 @@ fun test_timelock_blocks_early_execute() {
 #[test]
 fun test_timelock_execute_succeeds_after_24h() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
     let mut clock = clock::create_for_testing(&mut ctx);
 
@@ -63,7 +64,6 @@ fun test_timelock_execute_succeeds_after_24h() {
     assert!(risk_params::target_ltv_bps(&params)      == 4_500, 2);
 
     risk_params::destroy_for_testing(params);
-    risk_params::destroy_admin_cap_for_testing(admin);
     clock::destroy_for_testing(clock);
 }
 
@@ -72,7 +72,7 @@ fun test_timelock_execute_succeeds_after_24h() {
 #[expected_failure(abort_code = risk_params::EAlreadyPending)]
 fun test_no_duplicate_proposal() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
     let clock = clock::create_for_testing(&mut ctx);
 
@@ -94,7 +94,7 @@ fun test_no_duplicate_proposal() {
 #[expected_failure(abort_code = risk_params::EExceedsHardCap)]
 fun test_proposal_exceeds_hard_cap_aborts() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
     let clock = clock::create_for_testing(&mut ctx);
 
@@ -111,7 +111,7 @@ fun test_proposal_exceeds_hard_cap_aborts() {
 #[test]
 fun test_pause_unpause() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
 
     assert!(!risk_params::paused(&params), 0);
@@ -121,14 +121,13 @@ fun test_pause_unpause() {
     assert!(!risk_params::paused(&params), 2);
 
     risk_params::destroy_for_testing(params);
-    risk_params::destroy_admin_cap_for_testing(admin);
 }
 
 // ─── test_cancel_pending_update ──────────────────────────────────────────────
 #[test]
 fun test_cancel_pending_update() {
     let mut ctx = tx_context::dummy();
-    let admin = risk_params::create_admin_cap_for_testing(&mut ctx);
+    let admin = access::create_admin_auth_for_testing(&mut ctx);
     let mut params = risk_params::create_for_testing(&mut ctx);
     let clock = clock::create_for_testing(&mut ctx);
 
@@ -141,6 +140,5 @@ fun test_cancel_pending_update() {
     assert!(!risk_params::has_pending_update(&params), 1);
 
     risk_params::destroy_for_testing(params);
-    risk_params::destroy_admin_cap_for_testing(admin);
     clock::destroy_for_testing(clock);
 }

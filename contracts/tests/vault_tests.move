@@ -1,10 +1,10 @@
 #[test_only]
 module reflux::vault_tests;
 
+use reflux::access;
 use reflux::allocator;
 use reflux::deposit_router;
 use reflux::ib_credit;
-use reflux::keeper_auth;
 use reflux::risk_params;
 use reflux::share_token;
 use reflux::vault;
@@ -12,61 +12,8 @@ use sui::clock;
 use sui::tx_context;
 
 // Helper to set up the full suite of shared objects for a roll test.
-// Returns: (VaultState, DepositPool, ShareRegistry, AllocationPolicy, IBCreditState, RiskParams, KeeperAuth)
+// Returns: (VaultState, DepositPool, ShareRegistry, AllocationPolicy, IBCreditState, RiskParams, Auth<KeeperRole>)
 // Caller must destroy all after use.
-
-// ─── test_roll_requires_keeper ────────────────────────────────────────────────
-// roll_positions_mock aborts when auth is revoked.
-#[test]
-#[expected_failure(abort_code = keeper_auth::EKeeperRevoked)]
-fun test_roll_requires_keeper() {
-    let mut ctx      = tx_context::dummy();
-    let rp_admin     = risk_params::create_admin_cap_for_testing(&mut ctx);
-    let mut auth     = keeper_auth::create_for_testing(&mut ctx);
-    let mut state    = vault::create_for_testing(&mut ctx);
-    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
-    let mut registry = share_token::create_for_testing(&mut ctx);
-    let mut policy   = allocator::create_for_testing(&mut ctx);
-    let mut ib       = ib_credit::create_for_testing(&mut ctx);
-    let rp           = risk_params::create_for_testing(&mut ctx);
-    let mut clock_   = clock::create_for_testing(&mut ctx);
-
-    // Revoke the keeper auth
-    keeper_auth::revoke(&rp_admin, &mut auth);
-
-    // Must abort EKeeperRevoked
-    let _targets = vault::roll_positions_mock(
-        &auth, &mut state, &mut pool, &mut registry, &mut policy, &mut ib,
-        &rp, 0, 4_500, &clock_, &mut ctx,
-    );
-
-    abort 0 // unreachable
-}
-
-// ─── test_revoked_keeper_roll_aborts ─────────────────────────────────────────
-// Same as above — explicit naming per spec requirement.
-#[test]
-#[expected_failure(abort_code = keeper_auth::EKeeperRevoked)]
-fun test_revoked_keeper_roll_aborts() {
-    let mut ctx  = tx_context::dummy();
-    let rp_admin = risk_params::create_admin_cap_for_testing(&mut ctx);
-    let mut auth = keeper_auth::create_for_testing(&mut ctx);
-    keeper_auth::revoke(&rp_admin, &mut auth);
-
-    let mut state    = vault::create_for_testing(&mut ctx);
-    let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
-    let mut registry = share_token::create_for_testing(&mut ctx);
-    let mut policy   = allocator::create_for_testing(&mut ctx);
-    let mut ib       = ib_credit::create_for_testing(&mut ctx);
-    let rp           = risk_params::create_for_testing(&mut ctx);
-    let clock_       = clock::create_for_testing(&mut ctx);
-
-    let _t = vault::roll_positions_mock(
-        &auth, &mut state, &mut pool, &mut registry, &mut policy, &mut ib,
-        &rp, 0, 4_500, &clock_, &mut ctx,
-    );
-    abort 0 // unreachable
-}
 
 // ─── test_roll_atomic_order ───────────────────────────────────────────────────
 // Verifies the exact roll order by checking state between steps.
@@ -74,7 +21,7 @@ fun test_revoked_keeper_roll_aborts() {
 #[test]
 fun test_roll_atomic_order() {
     let mut ctx      = tx_context::dummy();
-    let auth         = keeper_auth::create_for_testing(&mut ctx);
+    let auth         = access::create_keeper_auth_for_testing(&mut ctx);
     let mut state    = vault::create_for_testing(&mut ctx);
     let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
     let mut registry = share_token::create_for_testing(&mut ctx);
@@ -111,7 +58,6 @@ fun test_roll_atomic_order() {
     assert!(final_nav == 110_000_000, 5);
     assert!(vault::last_nav_dusdc(&state) == 110_000_000, 6);
 
-    keeper_auth::destroy_for_testing(auth);
     vault::destroy_for_testing(state);
     deposit_router::destroy_pool_for_testing(pool);
     share_token::destroy_for_testing(registry);
@@ -129,7 +75,7 @@ fun test_roll_atomic_order() {
 #[test]
 fun test_rfusd_nav_accrual_over_two_rolls() {
     let mut ctx      = tx_context::dummy();
-    let auth         = keeper_auth::create_for_testing(&mut ctx);
+    let auth         = access::create_keeper_auth_for_testing(&mut ctx);
     let mut state    = vault::create_for_testing(&mut ctx);
     let mut pool     = deposit_router::create_pool_for_testing(&mut ctx);
     let mut registry = share_token::create_for_testing(&mut ctx);
@@ -169,7 +115,6 @@ fun test_rfusd_nav_accrual_over_two_rolls() {
 
     // Cleanup
     sui::test_utils::destroy(shares);
-    keeper_auth::destroy_for_testing(auth);
     vault::destroy_for_testing(state);
     deposit_router::destroy_pool_for_testing(pool);
     share_token::destroy_for_testing(registry);

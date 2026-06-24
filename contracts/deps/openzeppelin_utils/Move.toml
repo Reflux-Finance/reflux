@@ -1,0 +1,13 @@
+[package]
+name = "openzeppelin_utils"
+edition = "2024"
+# Vendored from https://github.com/OpenZeppelin/contracts-sui (MIT), commit
+# 0f02f8e52227664e45f3e0be50240b39f29e1d87. See the root README's "OpenZeppelin
+# Move Libraries" section for the `r.mvr` swap-in instructions
+# (package: "@openzeppelin-move/utils").
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
+
+[addresses]
+openzeppelin_utils = "0x0"

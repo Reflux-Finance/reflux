@@ -1,0 +1,14 @@
+[package]
+name = "openzeppelin_math"
+edition = "2024"
+# Vendored from https://github.com/OpenZeppelin/contracts-sui (MIT), commit
+# 0f02f8e52227664e45f3e0be50240b39f29e1d87. No network/MVR access in the build
+# environment, so this is a source copy rather than an `r.mvr` dependency — see
+# the "OpenZeppelin Move Libraries" section of the root README for the swap-in
+# instructions once `mvr` is available (package: "@openzeppelin-move/integer-math").
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "718ae563a42fb4ba0d055588f81c704dcef58c25" }
+
+[addresses]
+openzeppelin_math = "0x0"

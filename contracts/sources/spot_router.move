@@ -22,9 +22,10 @@
 module reflux::spot_router;
 
 use dusdc::dusdc::DUSDC;
+use reflux::access::AdminRole;
 use reflux::rfbtc::RFBTC;
-use reflux::risk_params::AdminCap;
 use reflux::types::BTC;
+use openzeppelin_access::access_control::Auth;
 use usdc::usdc::USDC;
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin};
@@ -103,7 +104,7 @@ fun cpamm_out(amount_in: u64, reserve_in: u64, reserve_out: u64, fee_bps: u64): 
 /// Seed only the dUSDC stable reserve (no USDC required).
 /// Useful on testnet where testnet USDC is unavailable but dUSDC is faucet-able.
 public fun seed_dusdc_stable(
-    _admin: &AdminCap,
+    _admin: &Auth<AdminRole>,
     config: &mut SpotRouterConfig,
     dusdc:  Coin<DUSDC>,
 ) {
@@ -113,9 +114,9 @@ public fun seed_dusdc_stable(
 }
 
 /// Deposit USDC and dUSDC into the 1:1 treasury.
-/// Run once after `sui client publish` using the AdminCap.
+/// Run once after `sui client publish` using an `Auth<AdminRole>`.
 public fun add_liquidity_usdc_dusdc(
-    _admin: &AdminCap,
+    _admin: &Auth<AdminRole>,
     config: &mut SpotRouterConfig,
     usdc:   Coin<USDC>,
     dusdc:  Coin<DUSDC>,
@@ -130,7 +131,7 @@ public fun add_liquidity_usdc_dusdc(
 /// Deposit SUI and dUSDC into the SUI/dUSDC CPAMM.
 /// Sets the initial price: e.g. 10 000 SUI + 30 000 dUSDC ≈ $3/SUI.
 public fun add_liquidity_sui_dusdc(
-    _admin: &AdminCap,
+    _admin: &Auth<AdminRole>,
     config: &mut SpotRouterConfig,
     sui:    Coin<sui::sui::SUI>,
     dusdc:  Coin<DUSDC>,
@@ -145,7 +146,7 @@ public fun add_liquidity_sui_dusdc(
 /// Deposit rfBTC and dUSDC into the rfBTC/dUSDC CPAMM.
 /// Sets the initial price: e.g. 0.5 rfBTC + 50 000 dUSDC ≈ $100 000/BTC.
 public fun add_liquidity_rfbtc_dusdc(
-    _admin: &AdminCap,
+    _admin: &Auth<AdminRole>,
     config: &mut SpotRouterConfig,
     rfbtc:  Coin<RFBTC>,
     dusdc:  Coin<DUSDC>,
@@ -160,7 +161,7 @@ public fun add_liquidity_rfbtc_dusdc(
 /// Drain the SUI/dUSDC CPAMM and return all reserves to the caller.
 /// Used by the admin to reset pool price after a bad initial seed.
 public fun admin_drain_sui_dusdc(
-    _admin:  &AdminCap,
+    _admin: &Auth<AdminRole>,
     config:  &mut SpotRouterConfig,
     ctx:     &mut TxContext,
 ): (Coin<sui::sui::SUI>, Coin<DUSDC>) {
@@ -173,7 +174,7 @@ public fun admin_drain_sui_dusdc(
 
 /// Drain the rfBTC/dUSDC CPAMM and return all reserves to the caller.
 public fun admin_drain_rfbtc_dusdc(
-    _admin:  &AdminCap,
+    _admin: &Auth<AdminRole>,
     config:  &mut SpotRouterConfig,
     ctx:     &mut TxContext,
 ): (Coin<RFBTC>, Coin<DUSDC>) {
@@ -317,7 +318,7 @@ public fun dusdc_sui(c: &SpotRouterConfig): u64     { c.dusdc_sui.value()     }
 public fun rfbtc_reserve(c: &SpotRouterConfig): u64 { c.rfbtc_reserve.value() }
 public fun dusdc_rfbtc(c: &SpotRouterConfig): u64   { c.dusdc_rfbtc.value()   }
 
-// ─── Test-only pool seeding (bypasses AdminCap) ───────────────────────────────
+// ─── Test-only pool seeding (bypasses Auth<AdminRole>) ────────────────────────
 
 #[test_only]
 public fun seed_usdc_dusdc_for_testing(

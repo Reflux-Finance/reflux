@@ -17,9 +17,15 @@
 /// guarantees and never references the venue tag directly.
 module reflux::ib_credit;
 
+use reflux::access::AdminRole;
 use reflux::risk_params::RiskParams;
+use openzeppelin_access::access_control::Auth;
+use openzeppelin_math::rounding;
+use openzeppelin_math::u64 as oz_u64;
+use openzeppelin_utils::rate_limiter::{Self, RateLimiter};
 use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
+use sui::clock::Clock;
 use sui::coin::{Self, Coin};
 use sui::event;
 
@@ -33,6 +39,7 @@ const VENUE_IRON_BANK: u8 = 1; // EXTERNAL-PENDING
 const EInsufficientBuffer:     u64 = 0;
 const EBufferDrawExceedsMax:   u64 = 1;
 const ERepayExceedsDrawn:      u64 = 2;
+const EMathOverflow:           u64 = 3;
 const EExternalPending:        u64 = 99;
 
 // ─── Structs ─────────────────────────────────────────────────────────────────
@@ -43,6 +50,13 @@ public struct IBCreditState has key {
     parked_balance: Balance<DUSDC>, // idle dUSDC currently parked
     buffer_drawn:   u64,            // credit drawn since last roll (IronBank only; 0 for Reserve)
     venue_tag:      u8,
+    /// Throttles total instant-exit dUSDC volume (fast + draw paths combined)
+    /// against a rolling window, independent of and in addition to the
+    /// per-call `max_buffer_draw_bps` cap below — defense against a burst of
+    /// withdrawals draining the buffer faster than one roll cycle.  `none`
+    /// until the admin configures it via `configure_exit_limiter` (it needs
+    /// a `&Clock` to anchor, which `init` cannot take).
+    exit_limiter:   Option<RateLimiter>,
 }
 
 // ─── Events ──────────────────────────────────────────────────────────────────
@@ -60,7 +74,28 @@ fun init(ctx: &mut TxContext) {
         parked_balance: balance::zero<DUSDC>(),
         buffer_drawn:   0,
         venue_tag:      VENUE_RESERVE,
+        exit_limiter:   option::none(),
     });
+}
+
+// ─── Admin: instant-exit rate limiter ────────────────────────────────────────
+
+/// Configure (or reconfigure) the instant-exit throttle as a continuously
+/// refilling token bucket: up to `capacity` dUSDC of instant exits, refilling
+/// `refill_amount` every `refill_interval_ms`. Starts full. Per OZ's
+/// `rate_limiter` reconfiguration model, this always re-anchors to
+/// `clock.timestamp_ms()` — safe to call again later to change the rate.
+public fun configure_exit_limiter(
+    _admin:             &Auth<AdminRole>,
+    state:              &mut IBCreditState,
+    capacity:           u64,
+    refill_amount:      u64,
+    refill_interval_ms: u64,
+    clock:              &Clock,
+) {
+    let now = clock.timestamp_ms();
+    state.exit_limiter =
+        option::some(rate_limiter::new_bucket(capacity, refill_amount, refill_interval_ms, now, capacity, clock));
 }
 
 // ─── Guarantee (a): park idle / unpark ───────────────────────────────────────
@@ -109,8 +144,13 @@ public(package) fun fund_instant_exit(
     amount:        u64,
     vault_nav:     u64,
     risk_params:   &RiskParams,
+    clock:         &Clock,
     ctx:           &mut TxContext,
 ): Coin<DUSDC> {
+    if (state.exit_limiter.is_some()) {
+        state.exit_limiter.borrow_mut().consume_or_abort(amount, clock);
+    };
+
     let parked = state.parked_balance.value();
 
     if (parked >= amount) {
@@ -153,10 +193,22 @@ public fun parked_amount(s: &IBCreditState): u64 { s.parked_balance.value() }
 public fun buffer_drawn(s: &IBCreditState): u64  { s.buffer_drawn }
 public fun venue_tag(s: &IBCreditState): u8      { s.venue_tag }
 
+/// Instant-exit headroom remaining in the current throttle window.
+/// Returns `u64::MAX` (unthrottled) when the admin hasn't configured a limiter.
+public fun exit_limiter_available(s: &IBCreditState, clock: &Clock): u64 {
+    if (s.exit_limiter.is_none()) return std::u64::max_value!();
+    s.exit_limiter.borrow().available(clock)
+}
+
 // ─── Internal math ────────────────────────────────────────────────────────────
 
+/// Checked `a * b / c`, truncating like native integer division. Delegates to
+/// the audited `openzeppelin_math::u64::mul_div` (u128 intermediate) instead
+/// of a hand-rolled cast, with a named abort on overflow.
 fun mul_div(a: u64, b: u64, c: u64): u64 {
-    (((a as u128) * (b as u128)) / (c as u128)) as u64
+    let result = oz_u64::mul_div(a, b, c, rounding::down());
+    assert!(result.is_some(), EMathOverflow);
+    result.destroy_some()
 }
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -168,12 +220,13 @@ public fun create_for_testing(ctx: &mut TxContext): IBCreditState {
         parked_balance: balance::zero<DUSDC>(),
         buffer_drawn:   0,
         venue_tag:      VENUE_RESERVE,
+        exit_limiter:   option::none(),
     }
 }
 
 #[test_only]
 public fun destroy_for_testing(s: IBCreditState) {
-    let IBCreditState { id, parked_balance, buffer_drawn: _, venue_tag: _ } = s;
+    let IBCreditState { id, parked_balance, buffer_drawn: _, venue_tag: _, exit_limiter: _ } = s;
     // Use force-destroy so tests with non-zero parked balance still clean up.
     std::unit_test::destroy(parked_balance);
     id.delete();
